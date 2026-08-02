@@ -731,11 +731,6 @@ solution_code_string = {repr(sanitized_code)}
         else:
             # Assume it's already in FunctionEvaluationSample format
             try:
-                # Add in the end a reqest to add final code under <final_code> tag
-                # sample["prompt"] = (
-                #     sample["prompt"]
-                #     + "\n\nIn the end of your answer, add a running final code under <final_code> tag and don't add anything else beside the final code."
-                # )
                 normalized_sample = FunctionEvaluationSample(**sample)
             except Exception as e:
                 self.logger.error(

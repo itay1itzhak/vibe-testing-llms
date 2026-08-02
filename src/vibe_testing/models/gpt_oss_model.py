@@ -6,6 +6,7 @@ import gc
 import importlib
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from pydantic import ConfigDict
@@ -25,6 +26,12 @@ from .generation_failure_tracker import (
 )
 
 logger = logging.getLogger(__name__)
+
+_GPT_OSS_FINAL_HEADER_RE = re.compile(
+    r"<\|start\|>assistant<\|channel\|>final"
+    r"(?:\s*<\|[^>]+\|>[^<]*)*"
+    r"\s*<\|message\|>"
+)
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer  # pragma: no cover
@@ -52,7 +59,6 @@ class GptOssModel(BaseModel):
         self.model: Any | None = None
         self.tokenizer: Any | None = None
         self.harmony_encoding = None
-        self.quantizatied_model_path = "/mnt/nlp/models/gpt-oss-20b-dequantized-bf16"
         self.backend = (
             self.config.get("model", {}).get("params", {}).get("backend", "hf")
         )
@@ -87,21 +93,6 @@ class GptOssModel(BaseModel):
 
         logger.info(f"Loading gpt-oss model '{self.model_name}'...")
 
-        # bnb_config = BitsAndBytesConfig(
-        #     load_in_4bit=True,
-        #     bnb_4bit_quant_type="nf4",
-        #     bnb_4bit_use_double_quant=True,
-        #     bnb_4bit_compute_dtype=torch.bfloat16,
-        #     llm_int8_target_modules=[
-        #         "q_proj",
-        #         "k_proj",
-        #         "v_proj",
-        #         "o_proj",  # Attention
-        #         "gate_up_proj",
-        #         "down_proj",  # Experts (MoE)
-        #         "lm_head",  # Optional: Quantize head for extra savings
-        #     ],
-        # )
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.model_name, cache_dir=cache_dir
         )
@@ -115,41 +106,6 @@ class GptOssModel(BaseModel):
             # attn_implementation="eager",
         )
 
-        # # 1. Load the raw configuration
-        # config = AutoConfig.from_pretrained(
-        #     self.quantizatied_model_path, trust_remote_code=True
-        # )
-
-        # # 2. SYSTEMIC FIX: Modify the object's internal state directly
-        # # We cannot use 'del config.torch_dtype' because it's a property.
-        # # We cannot use 'AutoConfig.from_dict' because it's a factory.
-        # # So we modify the underlying __dict__ to remove the data causing the issues.
-
-        # # Remove quantization metadata so BnB can take over
-        # if "quantization_config" in config.__dict__:
-        #     config.__dict__.pop("quantization_config")
-
-        # # Remove precision enforcement
-        # # We remove both 'dtype' (the source) and 'torch_dtype' (the property cache)
-        # config.__dict__.pop("dtype", None)
-        # config.__dict__.pop("torch_dtype", None)
-
-        # # 3. Re-instantiate a clean Config object
-        # # This creates a new config without the "baggage" of the old file
-        # self.model = AutoModelForCausalLM.from_pretrained(
-        #     self.quantizatied_model_path,
-        #     config=config,
-        #     cache_dir=cache_dir,
-        #     # dtype=torch.bfloat16,
-        #     # device_map=device,
-        #     device_map="auto",
-        #     attn_implementation="flash_attention_2",
-        #     quantization_config=bnb_config,
-        #     trust_remote_code=True,
-        # )
-        # self.tokenizer = AutoTokenizer.from_pretrained(
-        #     self.quantizatied_model_path, cache_dir=cache_dir
-        # )
         # Ensure decoder-only batching uses left padding to avoid warnings and misalignment.
         if self.tokenizer.padding_side != "left":
             self.tokenizer.padding_side = "left"
@@ -382,17 +338,6 @@ class GptOssModel(BaseModel):
                 )
             except Exception as e:
                 if "unexpected tokens remaining in message header" in str(e):
-                    # raw_tokenized_messages = self.tokenizer.batch_decode(
-                    #     generated_tokens.tolist()
-                    # )
-                    # index_of_json = raw_tokenized_messages.index("json")
-                    # parsed_messages = [
-                    #     Message.from_role_and_content(
-                    #         Role.ASSISTANT,
-                    #         "".join(raw_tokenized_messages[index_of_final:]),
-                    #     )
-                    # ]
-                    # return "".join(raw_tokenized_messages[index_of_json + 2 :])
                     logger.error(f"Error parsing generated tokens: {e}")
                     logger.error(
                         f"Returning FAILED TO PARSE GENERATED TOKENS response!"
@@ -562,11 +507,17 @@ class GptOssModel(BaseModel):
         Extract the GPT-OSS final-channel payload from a decoded generation.
 
         GPT-OSS Unsloth generations include explicit channel markers. We only want the
-        content between:
+        content between the assistant `final` header and its closing stop marker:
 
-          <|start|>assistant<|channel|>final<|message|>
+          <|start|>assistant<|channel|>final ... <|message|>
           ...
           <|return|>
+
+        Some GPT-OSS runs insert additional header metadata between `final` and
+        `<|message|>` (for example `<|constrain|>JSON` when the model is steered
+        toward JSON output). This extractor accepts those optional metadata tokens
+        while still failing loudly when the decoded string does not contain a valid
+        assistant final message block.
 
         Args:
             decoded (str): Decoded generation string with special tokens preserved
@@ -581,18 +532,18 @@ class GptOssModel(BaseModel):
         if decoded is None:
             raise ValueError("Decoded output is None.")
 
-        final_start = "<|start|>assistant<|channel|>final<|message|>"
         end_markers = ("<|return|>", "<|end|>")
 
-        start_idx = decoded.find(final_start)
-        if start_idx == -1:
+        header_match = _GPT_OSS_FINAL_HEADER_RE.search(decoded)
+        if header_match is None:
             prefix = decoded[:250].replace("\n", "\\n")
             raise ValueError(
                 "Failed to locate GPT-OSS final channel start marker in decoded output. "
-                f"Expected marker='{final_start}'. Decoded prefix='{prefix}'"
+                "Expected an assistant final header matching "
+                f"pattern='{_GPT_OSS_FINAL_HEADER_RE.pattern}'. Decoded prefix='{prefix}'"
             )
 
-        content_start = start_idx + len(final_start)
+        content_start = header_match.end()
         end_idx = -1
         for marker in end_markers:
             end_idx = decoded.find(marker, content_start)
@@ -812,22 +763,6 @@ class GptOssModel(BaseModel):
         final_gen_config = generation_config_params.copy()
         final_gen_config.update(merged_gen_kwargs)
 
-        # # EOS handling
-        # stop_token_ids = self.tokenizer.convert_tokens_to_ids(
-        #     ["<|return|>", "<|call|>"]
-        # )
-        # if "eos_token_id" not in final_gen_config:
-        #     final_gen_config["eos_token_id"] = stop_token_ids
-        # elif isinstance(final_gen_config["eos_token_id"], int):
-        #     final_gen_config["eos_token_id"] = [
-        #         final_gen_config["eos_token_id"]
-        #     ] + stop_token_ids
-        # else:
-        #     final_gen_config["eos_token_id"].extend(stop_token_ids)
-        #     final_gen_config["eos_token_id"] = list(
-        #         set(final_gen_config["eos_token_id"])
-        #     )
-
         # EOS handling (Harmony-aware) + pad_token_id for stable batch padding behavior
         stop_token_ids = self.tokenizer.convert_tokens_to_ids(
             ["<|return|>", "<|call|>"]
@@ -860,49 +795,7 @@ class GptOssModel(BaseModel):
                 )
                 logger.debug(f"Batch generation error message: {e}")
                 torch.cuda.empty_cache()
-                # outputs = self.model.generate(
-                #     input_ids=padded_inputs,
-                #     attention_mask=attention_mask,
-                #     **final_gen_config,
-                # )
                 return super().generate_batch(requests, **kwargs)
-
-        # results: List[str] = []
-        # trimmed_batch = self._trim_batch_after_return(
-        #     outputs, input_lengths, stop_token_ids[0], self.tokenizer.eos_token_id
-        # )
-        # for row_idx, output_row in enumerate(trimmed_batch):
-        #     tokens = output_row.tolist()
-        #     # Drop leading pad/eos noise
-        #     while tokens and tokens[0] in {pad_id, self.tokenizer.eos_token_id}:
-        #         tokens.pop(0)
-        #     # Keep the first eos as a delimiter; drop everything after it
-        #     if self.tokenizer.eos_token_id in tokens:
-        #         eos_pos = tokens.index(self.tokenizer.eos_token_id)
-        #         tokens = tokens[: eos_pos + 1]
-        #     if not tokens:
-        #         logger.error(
-        #             "Empty token sequence after cleanup for batch item %s", row_idx
-        #         )
-        #         results.append("{}")
-        #         continue
-
-        #     parsed_messages = (
-        #         self.harmony_encoding.parse_messages_from_completion_tokens(
-        #             tokens, Role.ASSISTANT
-        #         )
-        #     )
-        #     final_response = None
-        #     for msg in parsed_messages:
-        #         if msg.channel == "final":
-        #             final_response = msg.content
-        #             break
-        #     if final_response is None:
-        #         logger.error("No final response found for batch item %s", row_idx)
-        #         results.append("{}")
-        #     else:
-        #         results.append(final_response[0].text.strip())
-        # return results
 
         # Extract and sanitize per-row completion tokens (removes batch padding eos noise)
         completion_rows = self._extract_and_sanitize_completion_tokens(

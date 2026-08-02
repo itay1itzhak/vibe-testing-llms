@@ -29,6 +29,9 @@ VARIANT_FRIENDLY_MAP = {
     "original": "original",
     "base": "original",
     "control": "control",
+    "simple_personalized": "simple_personalized",
+    "simple_personalization": "simple_personalized",
+    "simple_variation": "simple_personalized",
 }
 SUBJECTIVE_DIMENSIONS = {
     "clarity_score": "subj_clarity",

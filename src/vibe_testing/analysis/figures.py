@@ -82,6 +82,7 @@ def _joint_heatmap_cmap_with_alpha() -> LinearSegmentedColormap:
 VARIANT_PALETTE: Dict[str, str] = {
     "original": "#4C72B0",  # Blue
     "personalized": "#55A868",  # Green
+    "simple_personalized": "#DD8452",  # Orange
 }
 
 # Vibe dimension mappings
@@ -1074,6 +1075,8 @@ def extract_variant_info(
             normalized.add("Original")
         elif v_lower in ("personalized", "personalization", "variation"):
             normalized.add("Personalized")
+        elif v_lower in ("simple_personalized", "simple_personalization"):
+            normalized.add("Simple Personalized")
         else:
             normalized.add(str(v).title())
 
@@ -1424,6 +1427,7 @@ def plot_pairwise_dimension_comparison(
     model_b_name: Optional[str] = None,
     sample_df: Optional[pd.DataFrame] = None,
     style: str = "modern",
+    show_lima_title: bool = False,
 ) -> Path:
     """
     Plot horizontal stacked bar chart showing win rates per dimension.
@@ -1441,6 +1445,7 @@ def plot_pairwise_dimension_comparison(
         sample_df: Optional sample-level data for extracting judge model info.
         style: Plot styling preset. "modern" (default) retains the existing look.
             "lima" mimics the compact, monochrome stacked-bar style used in the LIMA paper.
+        show_lima_title: If True, render the provided title above LIMA-style figures.
 
     Returns:
         Path to the saved figure.
@@ -1682,8 +1687,17 @@ def plot_pairwise_dimension_comparison(
             frameon=False,
             fontsize=lima_legend_size,
         )
-        # LIMA-style: omit in-plot title/subtitle; paper caption carries it.
-        ax.set_title("")
+        if show_lima_title and title and cfg.get("show_titles", True):
+            fig.suptitle(
+                title,
+                fontsize=cfg["suptitle_size"],
+                fontweight="bold",
+                y=1.06,
+            )
+        else:
+            # Default LIMA-style behavior: omit in-plot title/subtitle and rely on
+            # the surrounding paper caption.
+            ax.set_title("")
     else:
         ax.set_xlabel(
             "Win Rate Distribution",

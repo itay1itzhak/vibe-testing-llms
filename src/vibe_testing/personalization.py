@@ -34,6 +34,18 @@ class TaskPersonalizer:
     by using an LLM to generate and verify prompt variations.
     """
 
+    _IDENTIFY_CHANGE_TARGET_FIELDS: List[str] = [
+        "input_dimensions.real_world_context_embedding",
+        "input_dimensions.persona_based_task_framing",
+        "output_dimensions.clarity_and_comprehensibility",
+        "output_dimensions.efficiency",
+        "output_dimensions.expressive_style",
+        "persona.description",
+        "context.real_world_context_embedding",
+        "context.persona_based_task_framing",
+        "preferred_output_dimensions",
+    ]
+
     def __init__(
         self,
         model: BaseModel,
@@ -78,6 +90,15 @@ class TaskPersonalizer:
             raise ValueError(
                 "Personalization prompts not fully configured in model config."
             )
+
+        # Load simple personalization prompts (optional; required only for
+        # build_simple_dataset).
+        simple_config = self._model.config.get("simple_personalization_prompts", {})
+        self._simple_compose_template = simple_config.get("compose_prompt")
+        self._simple_compose_template_humaneval_plus = simple_config.get(
+            "compose_prompt_humaneval_plus"
+        )
+        self._simple_verify_template = simple_config.get("verify_prompt")
 
         # Load schemas
         schema_dir = os.path.join(os.path.dirname(__file__), "schemas")
@@ -191,6 +212,164 @@ class TaskPersonalizer:
 
         logger.info("Saved identified change options to %s", output_path)
 
+    def _build_identify_changes_prompt(
+        self,
+        profile: UserProfile,
+        requested_fields: Optional[List[str]] = None,
+    ) -> str:
+        """
+        Render the identify-changes prompt, optionally restricting it to specific fields.
+
+        Args:
+            profile: User profile being personalized.
+            requested_fields: Optional subset of fields to request in this call.
+
+        Returns:
+            str: Rendered identify-changes prompt.
+        """
+        prompt = self._identify_changes_template.format(
+            user_profile_json=profile.model_dump_json(indent=2)
+        )
+        if not requested_fields:
+            return prompt
+
+        requested_fields_block = "\n".join(f"- {field}" for field in requested_fields)
+        return (
+            f"{prompt}\n\n"
+            "CALL-SPECIFIC REQUIREMENT:\n"
+            "For this call, output entries ONLY for the following fields and omit all others:\n"
+            f"{requested_fields_block}\n"
+            f'The "changes_by_field" array must contain exactly {len(requested_fields)} object(s), '
+            "one per listed field.\n"
+            "Do not merge fields, do not duplicate fields, and do not return any extra fields."
+        )
+
+    @staticmethod
+    def _validate_identify_changes_fields(
+        parsed_json: Dict[str, Any],
+        requested_fields: List[str],
+        *,
+        context: str,
+    ) -> Dict[str, Any]:
+        """
+        Validate that identify-changes output contains exactly the requested fields.
+
+        Args:
+            parsed_json: Parsed identify-changes payload.
+            requested_fields: Fields expected in this response.
+            context: Short label for debugging messages.
+
+        Returns:
+            Dict[str, Any]: The validated payload.
+
+        Raises:
+            ValueError: If the payload omits, duplicates, or adds fields.
+        """
+        changes_by_field = parsed_json.get("changes_by_field")
+        if not isinstance(changes_by_field, list):
+            raise ValueError(
+                f"Identify-changes response for {context} is missing a list-valued "
+                "'changes_by_field' entry."
+            )
+
+        actual_fields = []
+        for item in changes_by_field:
+            if not isinstance(item, dict):
+                raise ValueError(
+                    f"Identify-changes response for {context} contains a non-object "
+                    "entry in 'changes_by_field'."
+                )
+            field_name = item.get("field")
+            if not isinstance(field_name, str) or not field_name.strip():
+                raise ValueError(
+                    f"Identify-changes response for {context} contains an invalid "
+                    "'field' value: {field_name!r}"
+                )
+            actual_fields.append(field_name)
+
+        if len(actual_fields) != len(set(actual_fields)):
+            raise ValueError(
+                f"Identify-changes response for {context} contains duplicate fields: "
+                f"{actual_fields}"
+            )
+
+        expected_set = set(requested_fields)
+        actual_set = set(actual_fields)
+        if actual_set != expected_set:
+            missing_fields = sorted(expected_set - actual_set)
+            extra_fields = sorted(actual_set - expected_set)
+            raise ValueError(
+                f"Identify-changes response for {context} returned the wrong field set. "
+                f"Missing={missing_fields}, extra={extra_fields}, actual={actual_fields}"
+            )
+
+        return parsed_json
+
+    def _recover_identify_change_options_by_field(
+        self,
+        profile: UserProfile,
+        *,
+        original_exception: Exception,
+    ) -> tuple[Dict[str, Any], str]:
+        """
+        Retry identify-changes generation one field at a time after a bulk parse failure.
+
+        Args:
+            profile: User profile being personalized.
+            original_exception: Exception from the original bulk parse attempt.
+
+        Returns:
+            tuple[Dict[str, Any], str]: Recovered parsed payload and debug raw-response blob.
+
+        Raises:
+            RuntimeError: If any field-scoped retry fails.
+        """
+        recovered_changes: List[Dict[str, Any]] = []
+        recovery_payload: Dict[str, Any] = {
+            "recovery_mode": "field_scoped_identify_changes",
+            "initial_error": repr(original_exception),
+            "responses": [],
+        }
+
+        for field_name in self._IDENTIFY_CHANGE_TARGET_FIELDS:
+            prompt = self._build_identify_changes_prompt(profile, [field_name])
+            response_str = self._model.generate(
+                prompt,
+                json_schema=self._identify_changes_schema,
+                **self._generation_kwargs,
+            )
+            logger.debug(
+                "Raw response for field-scoped change identification (%s):\n%s",
+                field_name,
+                response_str,
+            )
+            recovery_payload["responses"].append(
+                {"requested_fields": [field_name], "raw_response": response_str}
+            )
+
+            try:
+                parsed_json = parse_and_validate_json(
+                    response_str, schema=self._identify_changes_schema
+                )
+                parsed_json = self._validate_identify_changes_fields(
+                    parsed_json,
+                    [field_name],
+                    context=f"profile={profile.user_id}, field={field_name}",
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(
+                    "Failed to recover identify-changes output after the initial bulk "
+                    f"parse error for profile '{profile.user_id}'. "
+                    f"Field-scoped retry failed for field '{field_name}'."
+                ) from exc
+
+            recovered_changes.extend(parsed_json["changes_by_field"])
+
+        return (
+            {"changes_by_field": recovered_changes},
+            json.dumps(recovery_payload, indent=2, ensure_ascii=False),
+        )
+
     def _select_compose_prompt_template(self, sample: BenchmarkSample) -> str:
         """
         Select the compose prompt template based on the benchmark.
@@ -234,22 +413,34 @@ class TaskPersonalizer:
         """Subtask 1: Identify possible changes based on the user profile."""
         logger.info(f"Identifying change options for profile: {profile.user_id}")
 
-        prompt = self._identify_changes_template.format(
-            user_profile_json=profile.model_dump_json(indent=2)
-        )
+        prompt = self._build_identify_changes_prompt(profile)
 
         response_str = self._model.generate(
             prompt, json_schema=self._identify_changes_schema, **self._generation_kwargs
         )
         logger.debug(f"Raw response for change identification:\n{response_str}")
 
-        parsed_json = parse_and_validate_json(
-            response_str, schema=self._identify_changes_schema
-        )
+        raw_response_for_artifact = response_str
+        try:
+            parsed_json = parse_and_validate_json(
+                response_str, schema=self._identify_changes_schema
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Bulk identify-changes response was not valid JSON/schema output for "
+                "profile %s. Retrying with field-scoped requests.",
+                profile.user_id,
+                exc_info=exc,
+            )
+            parsed_json, raw_response_for_artifact = (
+                self._recover_identify_change_options_by_field(
+                    profile, original_exception=exc
+                )
+            )
         self._persist_identified_changes(
             profile=profile,
             parsed_json=parsed_json,
-            raw_response=response_str,
+            raw_response=raw_response_for_artifact,
         )
         return ChangeIdentificationOutput(**parsed_json)
 
@@ -497,6 +688,268 @@ class TaskPersonalizer:
             )
             logger.info(
                 f"Finished processing sample {sample_id}, created {len(variations)} variations."
+            )
+
+        return personalized_samples
+
+    def _validate_simple_personalization_config(self) -> None:
+        """
+        Validate that simple personalization prompts are configured.
+
+        Raises:
+            ValueError: If required simple personalization templates are missing.
+        """
+        if not self._simple_compose_template or not self._simple_verify_template:
+            raise ValueError(
+                "Simple personalization prompts not fully configured in model config. "
+                "Ensure 'simple_personalization_prompts.compose_prompt' and "
+                "'simple_personalization_prompts.verify_prompt' are set."
+            )
+
+    def _select_simple_compose_template(self, sample: BenchmarkSample) -> str:
+        """
+        Select the simple compose prompt template based on the benchmark.
+
+        Args:
+            sample: The benchmark sample to personalize.
+
+        Returns:
+            str: The appropriate simple compose template.
+
+        Raises:
+            ValueError: If HumanEval+ template is missing when required.
+        """
+        if sample.source_benchmark == "humaneval_plus":
+            if not self._simple_compose_template_humaneval_plus:
+                raise ValueError(
+                    "Model config missing simple_personalization_prompts."
+                    "compose_prompt_humaneval_plus required for humaneval_plus."
+                )
+            return self._simple_compose_template_humaneval_plus
+        return self._simple_compose_template
+
+    @staticmethod
+    def _build_persona_summary(profile: UserProfile) -> str:
+        """
+        Build a concise persona summary string from a user profile.
+
+        Args:
+            profile: The user profile.
+
+        Returns:
+            str: A short persona summary suitable for simple personalization prompts.
+        """
+        parts = []
+        persona_desc = getattr(profile, "persona_description", None)
+        if persona_desc:
+            parts.append(persona_desc)
+        else:
+            dump = profile.model_dump(exclude_none=True)
+            desc = dump.get("persona", {}).get("description", "")
+            if desc:
+                parts.append(desc)
+        if not parts:
+            parts.append(f"User: {profile.user_id}")
+        return " ".join(parts)
+
+    @staticmethod
+    def _build_changes_description(change_options: List[ChangeOption]) -> str:
+        """
+        Build a rendered changes description block from change options.
+
+        Args:
+            change_options: Change options to describe in the compose prompt.
+
+        Returns:
+            str: Human-readable bullet list of candidate prompt changes.
+
+        Raises:
+            ValueError: If no change options are provided.
+        """
+        if not change_options:
+            raise ValueError("Cannot build changes_description from an empty change list.")
+        return "\n".join(
+            f"- {change.name}: {change.change} (e.g., '{change.example}')"
+            for change in change_options
+        )
+
+    @staticmethod
+    def _select_simple_change_options(
+        options_by_field: List[FieldChanges],
+        num_variations_per_sample: int,
+    ) -> List[List[ChangeOption]]:
+        """
+        Select inspiration change options for simple personalization variations.
+
+        Unlike full personalization, simple personalization should stay minimal.
+        We therefore sample a single identified change option per variation and
+        pass it as inspiration to the compose prompt.
+
+        Args:
+            options_by_field: Identified change options grouped by profile field.
+            num_variations_per_sample: Number of simple variations to create.
+
+        Returns:
+            List[List[ChangeOption]]: One applied-change list per variation.
+
+        Raises:
+            ValueError: If no change options are available.
+        """
+        flat_options = [
+            option
+            for field_changes in options_by_field
+            for option in field_changes.options
+        ]
+        if not flat_options:
+            raise ValueError(
+                "Simple personalization requires at least one identified change option, "
+                "but none were produced for the user profile."
+            )
+
+        shuffled_options = flat_options[:]
+        random.shuffle(shuffled_options)
+        selected: List[List[ChangeOption]] = []
+        for index in range(num_variations_per_sample):
+            selected.append([shuffled_options[index % len(shuffled_options)]])
+        return selected
+
+    def build_simple_dataset(
+        self,
+        samples: List[BenchmarkSample],
+        profile: UserProfile,
+        num_variations_per_sample: int,
+    ) -> List[PersonalizedSample]:
+        """
+        Build a simple-personalized vibe-testing dataset.
+
+        Unlike ``build_dataset``, this skips the full change-option identification
+        step and instead produces minimally-modified prompts (at most 3-4 extra
+        words, no new constraints) that subtly reflect the user persona.
+
+        Each variation carries ``prompt_type`` and ``variant_label`` set to
+        ``"simple_personalized"`` so downstream stages can filter and aggregate
+        them as a distinct prompt type.
+
+        Args:
+            samples: A list of selected benchmark samples.
+            profile: The user profile.
+            num_variations_per_sample: The target number of simple variations per sample.
+
+        Returns:
+            A list of PersonalizedSample objects with simple personalized variations.
+
+        Raises:
+            ValueError: If simple personalization prompts are not configured.
+        """
+        self._validate_simple_personalization_config()
+        change_options_output = self._identify_change_options(profile)
+        options_by_field = change_options_output.changes_by_field
+
+        persona_summary = self._build_persona_summary(profile)
+        logger.info(
+            "Building simple personalized dataset for user %s with persona: %s",
+            profile.user_id,
+            persona_summary[:80],
+        )
+
+        personalized_samples: List[PersonalizedSample] = []
+
+        for sample in tqdm.tqdm(
+            samples, desc="Processing samples (simple)", total=len(samples)
+        ):
+            sample_id = sample.sample_id
+            logger.info("--- Processing sample (simple personalization): %s ---", sample_id)
+            variations: List[PromptVariation] = []
+
+            compose_template = self._select_simple_compose_template(sample)
+            selected_change_options = self._select_simple_change_options(
+                options_by_field,
+                num_variations_per_sample,
+            )
+            test_list = sample.metadata.get("prompt_tests", {})
+
+            compose_payloads = []
+            for i, applied_change_options in enumerate(selected_change_options):
+                variation_id = f"{sample_id}-{profile.user_id}-simple_var{i + 1}"
+                applied_change_names = [option.name for option in applied_change_options]
+                changes_description = self._build_changes_description(
+                    applied_change_options
+                )
+
+                if "{evaluation_tests}" in compose_template:
+                    render_prompt = compose_template.format(
+                        persona_summary=persona_summary,
+                        original_prompt=sample.prompt,
+                        changes_description=changes_description,
+                        evaluation_tests=format_test_cases_for_prompt(test_list),
+                    )
+                else:
+                    render_prompt = compose_template.format(
+                        persona_summary=persona_summary,
+                        original_prompt=sample.prompt,
+                        changes_description=changes_description,
+                    )
+
+                compose_payloads.append(
+                    {
+                        "variation_id": variation_id,
+                        "applied_changes": applied_change_names,
+                        "render_prompt": render_prompt,
+                    }
+                )
+
+            composed_outputs: List[str] = []
+            for start in range(0, len(compose_payloads), self._batch_size):
+                chunk = compose_payloads[start : start + self._batch_size]
+                prompts = [item["render_prompt"] for item in chunk]
+                composed_outputs.extend(self._compose_modified_prompts_batch(prompts))
+
+            verification_inputs = []
+            for payload, modified_prompt in zip(compose_payloads, composed_outputs):
+                finalized_prompt = self._finalize_modified_prompt(
+                    sample, modified_prompt
+                )
+                verification_inputs.append(
+                    {
+                        "variation_id": payload["variation_id"],
+                        "applied_changes": payload["applied_changes"],
+                        "modified_prompt": finalized_prompt,
+                    }
+                )
+
+            verifications: List[VerificationOutput] = []
+            saved_verify_template = self._verify_prompt_template
+            try:
+                self._verify_prompt_template = self._simple_verify_template
+                for start in range(0, len(verification_inputs), self._batch_size):
+                    chunk = verification_inputs[start : start + self._batch_size]
+                    original_prompts = [sample.prompt for _ in chunk]
+                    modified_prompts = [item["modified_prompt"] for item in chunk]
+                    verifications.extend(
+                        self._verify_variations_batch(original_prompts, modified_prompts)
+                    )
+            finally:
+                self._verify_prompt_template = saved_verify_template
+
+            for payload, verification in zip(verification_inputs, verifications):
+                variation = PromptVariation(
+                    variation_id=payload["variation_id"],
+                    applied_changes=payload["applied_changes"],
+                    modified_prompt=payload["modified_prompt"],
+                    verification=verification,
+                )
+                variations.append(variation)
+                logger.info(
+                    "Created simple variation %s", payload["variation_id"]
+                )
+
+            personalized_samples.append(
+                PersonalizedSample(original_sample=sample, variations=variations)
+            )
+            logger.info(
+                "Finished simple personalization for sample %s, created %d variations.",
+                sample_id,
+                len(variations),
             )
 
         return personalized_samples

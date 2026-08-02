@@ -1,0 +1,82 @@
+# Reusable model definitions for experiments
+# Each model maps to a model config file
+# type: "local" requires GPU, "api" can run anywhere
+
+models:
+  gpt-oss-low-effort:
+    config: "configs/model_configs/gpt-oss-low-effort.yaml"
+    type: "local"
+    description: "GPT-OSS 20B with low reasoning effort"
+    tags: ["oss", "local", "fast"]
+    batch_size: 8
+
+  gpt5:
+    config: "configs/model_configs/gpt5_config.yaml"
+    type: "api"
+    description: "GPT-5.1 via API"
+    tags: ["api", "frontier", "gpt5"]
+    batch_size: 1
+
+
+  gpt4-o:
+    config: "configs/model_configs/gpt4_config.yaml"
+    type: "api"
+    description: "GPT-4o via API (alias of gpt4)"
+    tags: ["api", "gpt4"]
+    batch_size: 1
+
+  llama3-70b:
+    config: "configs/model_configs/llama3_3_70b.yaml"
+    type: "local"
+    description: "Llama 3.3 70B Instruct"
+    tags: ["local", "llama", "large"]
+    batch_size: 2
+
+  gemma3-4b:
+    config: "configs/model_configs/gemma3_4b.yaml"
+    type: "local"
+    description: "Gemma 3 4B Instruct"
+    tags: ["local", "gemma", "small"]
+    batch_size: 8
+
+  qwen3-14b:
+    config: "configs/model_configs/qwen3_14b.yaml"
+    type: "local"
+    description: "Qwen 3 14B"
+    tags: ["local", "qwen", "large"]
+    batch_size: 4
+
+  qwen3-14b-low-max-tokens:
+    config: "configs/model_configs/qwen3_14b_low_max_tokens.yaml"
+    type: "local"
+    description: "Qwen 3 14B with 5000 max tokens"
+    tags: ["local", "qwen", "large"]
+    batch_size: 8
+
+  qwen3-32b:
+    config: "configs/model_configs/qwen3_32b.yaml"
+    type: "local"
+    description: "Qwen 3 32B"
+    tags: ["local", "qwen", "large"]
+    batch_size: 1
+
+  qwen3-32b-low-max-tokens:
+    config: "configs/model_configs/qwen3_32b_low_max_tokens.yaml"
+    type: "local"
+    description: "Qwen 3 32B with 5000 max tokens"
+    tags: ["local", "qwen", "large"]
+    batch_size: 4
+
+  gemini3-pro:
+    config: "configs/model_configs/gemini3-pro.yaml"
+    type: "api"
+    description: "Gemini 3 Pro"
+    tags: ["api", "gemini", "pro"]
+    batch_size: 1
+
+  gemini3_1-pro:
+    config: "configs/model_configs/gemini3_1-pro.yaml"
+    type: "api"
+    description: "Gemini 3.1 Pro"
+    tags: ["api", "gemini", "pro"]
+    batch_size: 1

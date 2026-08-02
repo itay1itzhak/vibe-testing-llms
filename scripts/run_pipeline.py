@@ -161,12 +161,6 @@ def main():
         default=list(range(1, 7)),
         help="Which pipeline stage(s) to run (e.g., 1 2 5). Default is all stages.",
     )
-    # parser.add_argument(
-    #     "--total-samples",
-    #     type=int,
-    #     default=10,
-    #     help="[Stage 2] Total number of samples to select.",
-    # )
     parser.add_argument(
         "--num-samples",
         type=int,
@@ -189,7 +183,7 @@ def main():
     parser.add_argument(
         "--prompt-types",
         nargs="+",
-        choices=["original", "personalized", "control"],
+        choices=["original", "personalized", "control", "simple_personalized"],
         help=(
             "[Stages 4, 5, 5B] Prompt types to operate on. "
             "When omitted, all prompt types are processed together using the legacy "
@@ -267,7 +261,7 @@ def main():
     parser.add_argument(
         "--pairwise-correctness-mode",
         type=str,
-        choices=["ignore", "dimension", "gate"],
+        choices=["ignore", "dimension", "gate", "both_correct_is_tie"],
         default="ignore",
         help=(
             "How to incorporate pass@1 correctness into per-sample pairwise "
@@ -339,6 +333,14 @@ def main():
         "--force-stage3-recreate",
         action="store_true",
         help="Archive any existing Stage 3 dataset outputs into 'old/<timestamp>' before rebuilding.",
+    )
+    parser.add_argument(
+        "--simple-personalization",
+        action="store_true",
+        help=(
+            "Build a simple-personalized dataset in Stage 3 instead of the "
+            "full personalized dataset."
+        ),
     )
     parser.add_argument(
         "--seed",
@@ -772,6 +774,8 @@ def run_pipeline_subprocess(
         ] + common_flags
         if args.force_stage3_recreate:
             cmd3.append("--force-recreate")
+        if getattr(args, "simple_personalization", False):
+            cmd3.append("--simple-personalization")
         run_command(cmd3, logger)
 
     # Stage 4: Evaluate Model
@@ -998,6 +1002,8 @@ def run_pipeline_direct(
         ] + common_flags
         if args.force_stage3_recreate:
             stage_args.append("--force-recreate")
+        if getattr(args, "simple_personalization", False):
+            stage_args.append("--simple-personalization")
         build_dataset_main(args=stage_args, model=judge_model)
 
     # --- Stage 4: Evaluate Model ---

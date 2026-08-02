@@ -441,6 +441,7 @@ def write_joint_preference_long_table(
             "tie_rate",
             "n_excl_ties",
             "win_rate",
+            "win_rate_excl_ties",
             "p_value",
             "significant",
             "formatted_win_rate",
@@ -928,11 +929,13 @@ _STREAMLIT_PROMPT_TYPE_LABELS = {
     "original": "Original",
     "control": "Control",
     "personalized": "Personalized",
+    "simple_personalized": "Simple Personalized",
 }
 _STREAMLIT_PROMPT_TYPE_ORDER = {
     "original": 0,
     "control": 1,
     "personalized": 2,
+    "simple_personalized": 3,
 }
 _STREAMLIT_JUDGE_PAIR_ROWS = [
     ("Overall", "overall"),

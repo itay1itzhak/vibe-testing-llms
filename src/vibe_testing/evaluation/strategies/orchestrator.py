@@ -247,7 +247,7 @@ class EvaluationOrchestrator:
         """
         if not self._is_variation(sample):
             return False
-        if self._infer_prompt_type(sample) != "personalized":
+        if self._infer_prompt_type(sample) not in {"personalized", "simple_personalized"}:
             return False
         verification = self._extract_verification_payload(sample)
         if verification is None:
@@ -388,17 +388,16 @@ class EvaluationOrchestrator:
         """
         Infer a coarse prompt type for an expanded sample.
 
-        Returns one of: ``original``, ``personalized``, or ``control``.
+        Returns one of: ``original``, ``personalized``, ``simple_personalized``,
+        or ``control``.
         """
         if not isinstance(sample, dict):
             return "original"
 
         active_variation = sample.get("active_variation")
         if not active_variation:
-            # No active variation: this is the base/original prompt.
             return "original"
 
-        # Try explicit labels on the variation first.
         variation_meta = active_variation if isinstance(active_variation, dict) else {}
         label = (
             str(
@@ -413,16 +412,18 @@ class EvaluationOrchestrator:
             return "original"
         if label in {"control"}:
             return "control"
+        if label in {"simple_personalized"}:
+            return "simple_personalized"
         if label:
-            # Anything else that is explicitly labeled is treated as personalized.
             return "personalized"
 
         # Fall back to variation_id heuristics.
         variation_id = str(variation_meta.get("variation_id") or "").lower()
         if variation_id.startswith("control") or variation_id.endswith("::control"):
             return "control"
+        if "simple_var" in variation_id or "simple_personalized" in variation_id:
+            return "simple_personalized"
 
-        # Default for any other active variation.
         return "personalized"
 
     def _safe_prepare(self, sample: Dict[str, Any]) -> Optional[PreparedInput]:

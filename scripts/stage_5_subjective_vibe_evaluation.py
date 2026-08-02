@@ -320,7 +320,7 @@ def main(args: Optional[List[str]] = None, judge_model: Optional[BaseModel] = No
     parser.add_argument(
         "--prompt-types",
         nargs="+",
-        choices=["original", "personalized", "control"],
+        choices=["original", "personalized", "control", "simple_personalized"],
         help=(
             "Prompt types to include in subjective evaluation. When omitted, all prompt "
             "types present in the raw results are evaluated together using the legacy "

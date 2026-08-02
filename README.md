@@ -162,6 +162,20 @@ python scripts/run_experiment.py configs/experiments/example_experiment.yaml --s
 
 ---
 
+## 🛠️ Practitioner's Guide
+
+Beyond reproducing the paper's experiments, the pipeline can be adapted to evaluate models for your own users or community (paper Section 5.2 and Appendix G). The general workflow:
+
+1. **Define a target user** from a description, survey, forum posts, or other available data. See `configs/user_profiles/` for example profiles.
+2. **Build a structured profile** with the persona creator — the `Profiler` class in `src/vibe_testing/profiling.py`, run via `scripts/stage_1_profile_user.py` — which converts free text into input preferences (what to test) and output preferences (how to judge).
+3. **Personalize an existing benchmark or task set** using the profile's input dimensions with `scripts/stage_3_build_vibe_dataset.py`, which also checks that task intent is preserved.
+4. **Run and compare models** on the personalized prompts: `scripts/stage_4_evaluate_vibe_dataset.py` for objective correctness, and `scripts/stage_5b_pairwise_comparison.py` for pairwise preference judging on the profile's output dimensions.
+5. **Inspect and aggregate results** at the dimension level, or across users and communities, with `scripts/stage_6_analyze_results.py`.
+
+For open-ended tasks without executable tests, the correctness step can be replaced with human review or task-specific rubrics; the rest of the pipeline (profiling, personalization, pairwise judging) stays the same. See Appendix G of the paper for the full guide and evaluation checklist.
+
+---
+
 ## 🔗 Resources
 
 - **Paper**: [arXiv](https://arxiv.org/abs/2604.14137)

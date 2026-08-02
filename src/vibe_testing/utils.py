@@ -104,16 +104,8 @@ def ensure_environment(should_print: bool = False) -> Path:
     os.environ.setdefault("HF_HOME", str(hf_home))
     os.environ.setdefault("HF_DATASETS_CACHE", str(datasets_cache))
     os.environ.setdefault("HF_HUB_CACHE", str(hf_home / "hub"))
-    # os.environ.setdefault("TRANSFORMERS_CACHE", str(models_cache / "transformers")) # transformer_cache will deprecate in the future, use HF_HOME instead
-    # delete TRANSFORMERS_CACHE from the environment with ''
-
-    # Print the environment variables
+    # TRANSFORMERS_CACHE is deprecated in favor of HF_HOME; drop it if inherited from the shell.
     os.environ.pop("TRANSFORMERS_CACHE", None)
-    # if should_print:
-    #     print(f"HF_HOME: {os.environ.get('HF_HOME')}")
-    #     print(f"HF_DATASETS_CACHE: {os.environ.get('HF_DATASETS_CACHE')}")
-    #     print(f"HF_HUB_CACHE: {os.environ.get('HF_HUB_CACHE')}")
-    #     print(f"TRANSFORMERS_CACHE: {os.environ.get('TRANSFORMERS_CACHE')}")
 
     _HM_HOME_PATH = hm_home_path
     _ENV_INITIALIZED = True

@@ -18,11 +18,12 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 import pandas as pd
 
 from src.vibe_testing.analysis.io import PAIRWISE_DIMENSIONS
+from src.vibe_testing.analysis.pairwise import _canonical_sample_key  # noqa: SLF001
 
 logger = logging.getLogger(__name__)
 
 # Valid correctness handling modes for pairwise winner determination.
-CORRECTNESS_MODES = ("ignore", "dimension", "gate")
+CORRECTNESS_MODES = ("ignore", "dimension", "gate", "both_correct_is_tie")
 
 # Fixed weight assigned to the base-correctness virtual dimension when
 # dimension-weighted winner recomputation is active.
@@ -170,8 +171,15 @@ def _row_sample_key(row: pd.Series) -> Optional[str]:
     """
     Return a stable per-sample key for a pairwise row.
 
-    Prefer (task_id, variant_id) when available; otherwise use task_id.
-    Mirrors ``pairwise._row_sample_key``.
+    Delegates to ``pairwise._canonical_sample_key`` so keys constructed here
+    match the objective lookup built by ``pairwise._build_objective_lookup``.
+    Previously this duplicated the logic and, for non-original variants whose
+    ``raw_task_id`` uses the ``::variation::`` encoding (e.g.
+    ``"104::variation::104-ai_researcher_02-var1"``), returned that raw string
+    verbatim instead of the canonical ``"104::104-ai_researcher_02-var1"``
+    key -- silently breaking objective-lookup joins (and therefore
+    correctness-aware modes like ``gate``/``both_correct_is_tie``) for
+    personalized/control rows while leaving original rows unaffected.
 
     Args:
         row: A pandas Series representing a single pairwise comparison row.
@@ -179,29 +187,11 @@ def _row_sample_key(row: pd.Series) -> Optional[str]:
     Returns:
         Optional[str]: A string key for objective lookup, or None.
     """
-
-    def _clean(v: object) -> Optional[str]:
-        if v is None:
-            return None
-        try:
-            if pd.isna(v):
-                return None
-        except Exception:
-            pass
-        s = str(v).strip()
-        if not s or s.lower() in {"nan", "none"}:
-            return None
-        return s
-
-    raw_task_id = _clean(row.get("raw_task_id"))
-    t = _clean(row.get("task_id"))
-    v = _clean(row.get("variant_id"))
-
-    if raw_task_id and raw_task_id != t:
-        return raw_task_id
-    if t and v and v != t:
-        return f"{t}::{v}"
-    return t
+    return _canonical_sample_key(
+        task_id=row.get("task_id"),
+        variant_id=row.get("variant_id"),
+        raw_task_id=row.get("raw_task_id"),
+    )
 
 
 def _lookup_sample_correctness(
@@ -305,6 +295,10 @@ def recompute_pairwise_overall_winner(
             - ``"dimension"``: Treat base pass@1 as an additional dimension vote.
             - ``"gate"``: If exactly one model is correct (pass@1 > 0), it wins
               automatically and dimension votes are skipped.
+            - ``"both_correct_is_tie"``: If both models are correct (pass@1 > 0),
+              the sample is forced to be a tie. Wins/losses are only computed when
+              at least one model is wrong; falls through to dimension comparison
+              otherwise.
         objective_lookup: Pre-built objective lookup (required when
             ``correctness_mode != "ignore"``).
         include_plus_correctness: When True and ``correctness_mode == "dimension"``,
@@ -422,6 +416,26 @@ def recompute_pairwise_overall_winner(
                 continue
             # Both correct or both incorrect: fall through to dimension comparison
 
+        # "both_correct_is_tie" mode: if both models are correct, force a tie
+        if (
+            correctness_mode == "both_correct_is_tie"
+            and has_correctness
+            and base_a is not None
+            and base_b is not None
+        ):
+            a_correct = base_a > 0
+            b_correct = base_b > 0
+            if a_correct and b_correct:
+                overall_winners.append(None)
+                overall_labels.append("tie")
+                win_count_a.append(0)
+                win_count_b.append(0)
+                win_count_tie.append(0)
+                valid_for_overall.append(True)
+                eval_error_dim_count.append(0)
+                continue
+            # One or both wrong: fall through to dimension comparison
+
         # Dimension-based comparison (standard or with correctness as dimension)
         a_wins = 0
         b_wins = 0
@@ -524,6 +538,10 @@ def recompute_pairwise_overall_winner_dimension_weighted(
               (weight = ``CORRECTNESS_DIMENSION_WEIGHT``).
             - ``"gate"``: If exactly one model is correct (pass@1 > 0), it wins
               automatically and dimension votes are skipped.
+            - ``"both_correct_is_tie"``: If both models are correct (pass@1 > 0),
+              the sample is forced to be a tie. Wins/losses are only computed when
+              at least one model is wrong; falls through to dimension comparison
+              otherwise.
         objective_lookup: Pre-built objective lookup (required when
             ``correctness_mode != "ignore"``).
         include_plus_correctness: When True and ``correctness_mode == "dimension"``,
@@ -671,6 +689,28 @@ def recompute_pairwise_overall_winner_dimension_weighted(
                 )
                 score_tie_list.append(0.0)
                 continue
+
+        # "both_correct_is_tie" mode: if both models are correct, force a tie
+        if (
+            correctness_mode == "both_correct_is_tie"
+            and has_correctness
+            and base_a is not None
+            and base_b is not None
+        ):
+            a_correct = base_a > 0
+            b_correct = base_b > 0
+            if a_correct and b_correct:
+                overall_winners.append(None)
+                overall_labels.append("tie")
+                valid_for_overall.append(True)
+                eval_error_dim_count.append(0)
+                score_a_list.append(0.0)
+                score_b_list.append(0.0)
+                score_tie_list.append(
+                    float(dim_weights.get("correctness", CORRECTNESS_DIMENSION_WEIGHT))
+                )
+                continue
+            # One or both wrong: fall through to dimension comparison
 
         score_a = 0.0
         score_b = 0.0

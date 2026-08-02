@@ -10,7 +10,6 @@ model:
     #backend: "hf"
     #model_name: "Qwen/Qwen3-32B"
     device: "auto"
-    cache_dir: "/mnt/nlp/models"
     #trust_remote_code: true
 
     # --- Optional: Unsloth backend (GPU/CUDA required) ---
@@ -145,6 +144,10 @@ personalization_prompts:
     3. Keys must be exactly: changes_by_field, field, options, name, change, example, rationale.
       - Never output {{field (wrong)}} — always output "field".
       - No extra keys, no trailing commas.
+    4. Use plain ASCII text in every JSON string value.
+      - Never use LaTeX, backslashes, or escape sequences in examples.
+      - Do not write things like \epsilon, \beta, \"quoted text\", or \n.
+      - If needed, spell such content out with plain words instead.
 
     Correct Example (with two fields and two options each):
 
@@ -274,3 +277,132 @@ personalization_prompts:
     }}
 
     Make sure to output only the JSON object and don't use too much thinking tokens.
+simple_personalization_prompts:
+  compose_prompt: |
+    You are an expert in subtly adapting programming task prompts to match a user persona.
+    You will be given an original programming problem prompt and a brief user persona summary.
+    Your task is to make ONLY minimal phrasing adjustments to the prompt that subtly reflect the user's background or style.
+
+    STRICT CONSTRAINTS:
+    - The modified prompt must NOT be longer than the original by more than 3-4 words.
+    - Do NOT add any new requirements, constraints, or instructions that were not in the original.
+    - Do NOT add explanations, examples, or clarifications that were not in the original.
+    - The modification should be limited to subtle word choice, phrasing, or contextual cues (e.g., adding "I need a function for my homework" for a student user).
+    - It must contain at least one user-specific detail for that persona from the user context or workflow mentioned in the possible modifications, without adding any new requirements, constraints, or instructions.
+    - The modified prompt should be human-like and natural, and not longer than the original beyond 3-4 words.
+    - The core programming task and its solution MUST remain identical.
+
+    User Persona Summary:
+    ---
+    {persona_summary}
+    ---
+
+    Possible modifications to apply (choose one):
+    ---
+    {changes_description}
+    ---
+
+    Original Prompt:
+    ---
+    {original_prompt}
+    ---
+
+    Instructions:
+    1. Read the original prompt and the persona summary.
+    2. Make only subtle phrasing changes (word substitutions, minor rewordings) that reflect the persona.
+    3. Keep the prompt nearly identical in length and structure to the original.
+    4. Do NOT add constraints, instructions, or any new content, including output format.
+    5. Your output MUST be a single valid JSON object with exactly one key "modified_prompt".
+    6. No extra keys, no trailing commas, no markdown fences, no commentary.
+
+    Correct Examples:
+
+    # novice user example
+    Original: "Write a function sum_list(nums) that returns the sum of a list of integers."
+    Persona: "A data science beginner learning Python"
+
+    {{"modified_prompt": "Help me write a function sum_list(nums) for my stat course, it should return the sum of a list of integers."}}
+
+    # advanced developer example
+    Original: "Write a function sum_list(nums) that returns the sum of a list of integers."
+    Persona: "An experienced developer"
+
+    {{"modified_prompt": "Write a highly optimized function sum_list(nums) that returns the sum of a list of integers."}}
+
+  compose_prompt_humaneval_plus: |
+    You are an expert in subtly adapting programming task prompts to match a user persona.
+    You will be given an original programming problem prompt and a brief user persona summary.
+    Your task is to write a very short prefix (at most 3-4 words) that subtly reflects the user's persona. This prefix will be prepended to the original prompt.
+
+    STRICT CONSTRAINTS:
+    - The prefix must be at most 3-4 words.
+    - Do NOT add more than one new requirement, constraint, or instruction.
+    - The prefix should only provide a brief contextual cue consistent with the persona.
+    - The core programming task and its solution MUST remain identical.
+
+    User Persona Summary:
+    ---
+    {persona_summary}
+    ---
+
+    Original Prompt:
+    ---
+    {original_prompt}
+    ---
+
+    Instructions:
+    1. Read the original prompt and the persona summary.
+    2. Write a very short prefix (at most 3-4 words) that subtly reflects the persona.
+    3. Do NOT add constraints, instructions, or any new content.
+    4. Your output MUST be a single valid JSON object with exactly one key "modified_prompt" containing only the prefix text.
+    5. No extra keys, no trailing commas, no markdown fences, no commentary.
+
+    Correct Example for a Python beginner user:
+
+    Original: "from typing import List\n\ndef has_close_elements(numbers: List[float], threshold: float) -> bool:\n    ..."
+
+    {{"modified_prompt": "Help me understand this:"}}
+
+  verify_prompt: |
+    You are an expert in verifying programming problem statements.
+    You will be given an original prompt and a modified version of it.
+    Your task is to determine if the modified prompt preserves the original's core task, would result in the same ground-truth solution, and has NOT been significantly lengthened or had constraints added.
+
+    Original Prompt:
+    ---
+    {original_prompt}
+    ---
+
+    Modified Prompt:
+    ---
+    {modified_prompt}
+    ---
+
+    Instructions:
+    1. Read both prompts carefully.
+    2. Decide:
+      - "same_end_goal": Is the fundamental task identical in both prompts?
+      - "same_ground_truth": Would the correct solution for the modified prompt also be correct for the original prompt?
+    3. Additionally verify that the modified prompt does NOT add more than one new constraint, requirement, or instruction, and is not significantly longer than the original. If it does, set same_ground_truth to false.
+    4. Output MUST be a single valid JSON object, nothing else.
+    5. Use exactly these keys: same_end_goal, same_ground_truth, reason_if_failed.
+      - Boolean values must be JSON booleans: true or false (lowercase).
+      - If both booleans are true, set "reason_if_failed" to an empty string "".
+      - If either boolean is false, provide a concise reason in "reason_if_failed".
+    6. No extra keys, no trailing commas, no markdown fences, no commentary.
+
+    Correct Examples:
+
+    # Pass case (both true, minimal change)
+    {{
+      "same_end_goal": true,
+      "same_ground_truth": true,
+      "reason_if_failed": ""
+    }}
+
+    # Fail case (too many additions)
+    {{
+      "same_end_goal": true,
+      "same_ground_truth": false,
+      "reason_if_failed": "Modified prompt adds more than one new requirement, constraint, or instruction."
+    }}

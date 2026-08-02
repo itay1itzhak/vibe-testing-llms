@@ -261,13 +261,13 @@ def parse_pairwise_artifact_path(
 
 def infer_prompt_type(identifier: str) -> str:
     """
-    Infers the prompt type (original, personalized, or control) from a string.
+    Infers the prompt type from a string identifier.
 
     Args:
         identifier (str): A filename, sample ID, or directory name.
 
     Returns:
-        str: One of 'original', 'personalized', or 'control'.
+        str: One of 'original', 'personalized', 'simple_personalized', or 'control'.
     """
     if not identifier:
         return "original"
@@ -283,6 +283,15 @@ def infer_prompt_type(identifier: str) -> str:
         or "variation_control_" in val
     ):
         return "control"
+
+    # Simple personalized heuristics (must come BEFORE generic personalized)
+    if (
+        "simple_personalized" in val
+        or "simple_var" in val
+        or "::variation::simple_" in val
+        or "-simple_personalized-metrics" in val
+    ):
+        return "simple_personalized"
 
     # Personalized prompts heuristics
     # - Contains variation marker (::variation::)

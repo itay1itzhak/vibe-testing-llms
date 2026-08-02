@@ -10,7 +10,6 @@ model:
     #backend: "hf"
     #model_name: "Qwen/Qwen3-14B"
     #device: "auto"
-    cache_dir: "/mnt/nlp/models"
     #trust_remote_code: true
 
     # --- Optional: Unsloth backend (GPU/CUDA required) ---

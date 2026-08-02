@@ -249,3 +249,86 @@ personalization_prompts:
       "same_ground_truth": false,
       "reason_if_failed": "Modified prompt changes input format, so the original correct solution would fail."
     }}
+
+simple_personalization_prompts:
+  compose_prompt: |
+    You are an expert in subtly adapting programming task prompts to match a user persona.
+    You will be given an original programming problem prompt and a brief user persona summary.
+    Your task is to make ONLY minimal phrasing adjustments to the prompt that subtly reflect the user's background or style.
+
+    STRICT CONSTRAINTS:
+    - The modified prompt must NOT be longer than the original by more than 3-4 words.
+    - Do NOT add any new requirements, constraints, instructions, formatting directives, or bullet points.
+    - Do NOT add explanations, examples, or clarifications that were not in the original.
+    - Do NOT restructure or reformat the prompt (no added sections, headers, or numbered lists).
+    - The modification should be limited to subtle word choice, phrasing, or brief contextual cues (e.g., replacing "Write a function" with "I need a function" for a casual user).
+    - The core programming task and its solution MUST remain identical.
+
+    User Persona Summary:
+    ---
+    {persona_summary}
+    ---
+
+    Original Prompt:
+    ---
+    {original_prompt}
+    ---
+
+    Instructions:
+    1. Read the original prompt and the persona summary.
+    2. Make only subtle phrasing changes (word substitutions, minor rewordings) that reflect the persona.
+    3. Keep the prompt nearly identical in length and structure to the original.
+    4. Do NOT add constraints, instructions, or any new content.
+    5. Your output MUST be a single valid JSON object with exactly one key "modified_prompt".
+    6. No extra keys, no trailing commas, no markdown fences, no commentary.
+
+    Correct Example:
+
+    Original: "Write a function sum_list(nums) that returns the sum of a list of integers."
+    Persona: "A data science beginner learning Python"
+
+    {{"modified_prompt": "I need a function sum_list(nums) that returns the sum of a list of integers."}}
+
+  verify_prompt: |
+    You are an expert in verifying programming problem statements.
+    You will be given an original prompt and a modified version of it.
+    Your task is to determine if the modified prompt preserves the original's core task, would result in the same ground-truth solution, and has NOT been significantly lengthened or had constraints added.
+
+    Original Prompt:
+    ---
+    {original_prompt}
+    ---
+
+    Modified Prompt:
+    ---
+    {modified_prompt}
+    ---
+
+    Instructions:
+    1. Read both prompts carefully.
+    2. Decide:
+      - "same_end_goal": Is the fundamental task identical in both prompts?
+      - "same_ground_truth": Would the correct solution for the modified prompt also be correct for the original prompt?
+    3. Additionally verify that the modified prompt does NOT add new constraints, requirements, instructions, or significant length compared to the original. If it does, set same_ground_truth to false.
+    4. Output MUST be a single valid JSON object, nothing else.
+    5. Use exactly these keys: same_end_goal, same_ground_truth, reason_if_failed.
+      - Boolean values must be JSON booleans: true or false (lowercase).
+      - If both booleans are true, set "reason_if_failed" to an empty string "".
+      - If either boolean is false, provide a concise reason in "reason_if_failed".
+    6. No extra keys, no trailing commas, no markdown fences, no commentary.
+
+    Correct Examples:
+
+    # Pass case (both true, minimal change)
+    {{
+      "same_end_goal": true,
+      "same_ground_truth": true,
+      "reason_if_failed": ""
+    }}
+
+    # Fail case (too many additions)
+    {{
+      "same_end_goal": true,
+      "same_ground_truth": false,
+      "reason_if_failed": "Modified prompt adds new requirements and constraints not in the original."
+    }}

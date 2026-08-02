@@ -1,0 +1,33 @@
+# Reusable persona definitions for experiments
+# Each persona maps to a user profile config file
+
+personas:
+  researcher_user:
+    config: "configs/user_profiles/researcher_user.yaml"
+    description: "ML researcher focused on efficiency and clarity"
+    tags: ["academic", "ml", "advanced"]
+
+  novice_user:
+    config: "configs/user_profiles/novice_user.yaml"
+    description: "Undergraduate student learning Python"
+    tags: ["beginner", "learning", "academic"]
+
+  intermediate_learner:
+    config: "configs/user_profiles/intermediate_learner.yaml"
+    description: "Intermediate programmer learning from debugging"
+    tags: ["intermediate", "learning", "debugging", "academic"]
+
+  advanced_developer:
+    config: "configs/user_profiles/advanced_developer.yaml"
+    description: "Advanced programmer optimizing performance"
+    tags: ["advanced", "performance", "optimization"]
+
+  fireship_user:
+    config: "configs/user_profiles/fireship_user.yaml"
+    description: "The Fireship coding channel creator"
+    tags: ["advanced", "practical", "automation", "web scraping"]
+
+  reddit_beginner_user:
+    config: "configs/user_profiles/reddit_beginner_user.yaml"
+    description: "A Reddit user learning Python for practical automation"
+    tags: ["beginner", "practical", "automation", "web scraping"]

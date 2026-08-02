@@ -451,7 +451,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pairwise-correctness-mode",
         type=str,
-        choices=["ignore", "dimension", "gate"],
+        choices=["ignore", "dimension", "gate", "both_correct_is_tie"],
         default="ignore",
         help=(
             "When running the 'analyze' stage, pass --pairwise-correctness-mode "
@@ -478,7 +478,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--prompt-types",
         nargs="+",
-        choices=["original", "personalized", "control"],
+        choices=["original", "personalized", "control", "simple_personalized"],
         help=(
             "Override defaults.prompt_types from the config. When provided, "
             "only these prompt types will be used for objective/subjective/"
@@ -928,67 +928,6 @@ def show_status(
             print(line)
         print()
 
-    # print("Completion Status (details):")
-    # print("- Datasets (missing personas):")
-    # if missing_datasets:
-    #     ds_headers = ["Persona"]
-    #     ds_rows = [[persona] for persona in missing_datasets]
-    #     print(_format_table(ds_headers, ds_rows))
-    # else:
-    #     print("  None missing")
-    # print()
-
-    # print("- Objective evaluations (missing persona-model pairs):")
-    # if missing_pairs:
-    #     obj_headers = ["Persona", "Model", "Prompt Type"]
-    #     obj_rows = [
-    #         [persona, model, _format_prompt_type(prompt_type)]
-    #         for persona, model, prompt_type in missing_pairs
-    #     ]
-    #     print(_format_table(obj_headers, obj_rows))
-    # else:
-    #     print("  None missing")
-    # print()
-
-    # print("- Subjective evaluations (missing persona-model-judge triples):")
-    # if missing_triples:
-    #     subj_headers = ["Persona", "Model", "Judge", "Prompt Type"]
-    #     subj_rows = [
-    #         [
-    #             persona,
-    #             model,
-    #             judge,
-    #             _format_prompt_type(prompt_type),
-    #         ]
-    #         for persona, model, judge, prompt_type in missing_triples
-    #     ]
-    #     print(_format_table(subj_headers, subj_rows))
-    # else:
-    #     print("  None missing")
-    # print()
-
-    # print("- Pairwise evaluations (missing persona-model_a-model_b-judge quads):")
-    # if missing_quads:
-    #     pair_headers = [
-    #         "Persona",
-    #         "Model A",
-    #         "Model B",
-    #         "Judge",
-    #         "Prompt Type",
-    #     ]
-    #     pair_rows = [
-    #         [
-    #             persona,
-    #             model_a,
-    #             model_b,
-    #             judge,
-    #             _format_prompt_type(prompt_type),
-    #         ]
-    #         for persona, model_a, model_b, judge, prompt_type in missing_quads
-    #     ]
-    #     print(_format_table(pair_headers, pair_rows))
-    # else:
-    #     print("  None missing")
     print()
 
     print("Per-model outstanding tasks (summary):")

@@ -3,7 +3,6 @@ model:
   params:
     model_name: "google/gemma-3-4b-it"
     device: "auto"
-    cache_dir: "/mnt/nlp/models"
     trust_remote_code: true
 
 generation_config:

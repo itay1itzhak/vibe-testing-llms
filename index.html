@@ -766,6 +766,52 @@
     </div>
   </section>
 
+  <section class="section" id="practitioners-guide">
+    <h2 class="title is-3">Practitioner's Guide</h2>
+    <p class="section-lead">
+      Beyond the experiments in this paper, the same framework and pipeline can be used as a
+      scaffold for evaluating models against a practitioner's own users or community.
+    </p>
+    <div class="step-grid">
+      <div class="step-card">
+        <div class="step-number">1</div>
+        <h3>Define your users</h3>
+        <p>
+          Build a profile from a description, survey, forum posts, or other available data,
+          capturing what a user tests for and how they judge responses.
+        </p>
+      </div>
+      <div class="step-card">
+        <div class="step-number">2</div>
+        <h3>Personalize your tasks</h3>
+        <p>
+          Adapt an existing benchmark, internal task set, or real user requests using the
+          profile's input dimensions, while checking that the task's intent is preserved.
+        </p>
+      </div>
+      <div class="step-card">
+        <div class="step-number">3</div>
+        <h3>Compare with their criteria</h3>
+        <p>
+          Judge model responses using the profile's output dimensions, then inspect results
+          by dimension or aggregate them across users and communities.
+        </p>
+      </div>
+    </div>
+    <div class="highlight-box mt-5">
+      <p>
+        Because different users weigh dimensions like clarity, workflow fit, or
+        constraint-following differently, this evaluation is user-conditioned by design: it
+        surfaces which model fits a given user or community best, rather than producing a
+        single universal ranking.
+      </p>
+    </div>
+    <p class="small-note">
+      See Appendix G of the paper for the full Practitioner's Guide and evaluation checklist,
+      and the <a href="https://github.com/itay1itzhak/vibe-testing-llms" target="_blank">GitHub repository</a> for the runnable pipeline.
+    </p>
+  </section>
+
   <section class="section" id="results">
     <h2 class="title is-3">Results: Personalization Can Change Model Preferences</h2>
     <p class="section-lead">

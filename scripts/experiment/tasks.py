@@ -66,6 +66,8 @@ class Task:
     def describe(self) -> str:
         """Get human-readable description of the task."""
         if self.stage == "dataset":
+            if self.prompt_type == "simple_personalized":
+                return f"Generate simple personalized dataset for {self.persona}"
             return f"Generate dataset for {self.persona}"
         elif self.stage == "objective":
             desc = f"Objective eval: {self.persona} / {self.model}"
@@ -198,11 +200,32 @@ class TaskGenerator:
         tasks: List[Task] = []
         task_id = 1
 
-        # Stage: Dataset generation (one per persona)
+        # Stage: Dataset generation (one per persona, plus one for simple
+        # personalization when that prompt type is configured).
         if "dataset" in use_stages:
             for persona in use_personas:
                 tasks.append(Task(task_id, "dataset", persona))
                 task_id += 1
+
+            # Generate an additional dataset task per persona when
+            # simple_personalized is among the requested prompt types.
+            dataset_prompt_types = self._resolve_prompt_types(
+                "objective", prompt_types_override
+            )
+            if any(
+                pt and normalize_token(pt) == "simple_personalized"
+                for pt in dataset_prompt_types
+            ):
+                for persona in use_personas:
+                    tasks.append(
+                        Task(
+                            task_id,
+                            "dataset",
+                            persona,
+                            prompt_type="simple_personalized",
+                        )
+                    )
+                    task_id += 1
 
         # Stage: Objective evaluation (persona x model)
         if "objective" in use_stages:
@@ -547,7 +570,15 @@ class TaskGenerator:
             is_completed = False
 
             if task.stage == "dataset":
-                is_completed = task.persona in existing_datasets
+                if task.prompt_type == "simple_personalized":
+                    existing_simple = (
+                        state.get_existing_simple_datasets()
+                        if hasattr(state.__class__, "get_existing_simple_datasets")
+                        else set()
+                    )
+                    is_completed = task.persona in existing_simple
+                else:
+                    is_completed = task.persona in existing_datasets
             elif task.stage == "objective":
                 model_key = _canon_model(task.model)
                 is_completed = (

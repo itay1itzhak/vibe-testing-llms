@@ -43,6 +43,7 @@ class AggregationBundle:
     persona_summary: pd.DataFrame
     global_summary: pd.DataFrame
     ranking_reversals: pd.DataFrame
+    simple_personalized_deltas: Optional[pd.DataFrame] = None
 
 
 def run_full_aggregation(
@@ -79,6 +80,18 @@ def run_full_aggregation(
     global_summary = build_global_summary(variant_summary)
     ranking_reversals = detect_ranking_reversals(variant_summary)
 
+    simple_deltas = None
+    if (
+        "variant_label" in variant_summary.columns
+        and "simple_personalized"
+        in variant_summary["variant_label"].unique()
+    ):
+        simple_deltas = compute_user_model_deltas(
+            variant_summary,
+            original_label="original",
+            personalized_label="simple_personalized",
+        )
+
     return AggregationBundle(
         sample_level=sample_df,
         user_model_variant=variant_summary,
@@ -86,6 +99,7 @@ def run_full_aggregation(
         persona_summary=persona_summary,
         global_summary=global_summary,
         ranking_reversals=ranking_reversals,
+        simple_personalized_deltas=simple_deltas,
     )
 
 

@@ -325,13 +325,15 @@ class ExperimentRunner:
         Args:
             task: Dataset generation task.
         """
+        is_simple = task.prompt_type == "simple_personalized"
         persona_cfg = self.config.get_persona_config(task.persona)
         gen_cfg = self.config.get_generator_config()
         defaults = self.config.defaults
         batch_size = self._get_batch_size(gen_cfg)
 
         # Build the dataset ID for this experiment
-        dataset_id = self.config.get_dataset_id(task.persona)
+        base_dataset_id = self.config.get_dataset_id(task.persona)
+        dataset_id = f"{base_dataset_id}_simple" if is_simple else base_dataset_id
 
         # Archive existing results if forced
         if self.force_dataset and not self.dry_run:
@@ -342,13 +344,10 @@ class ExperimentRunner:
                 self.config.generator,
                 filter_model,
             )
-            # The actual dataset files are inside a dataset_<run_id> subdirectory
-            # But vibe_dataset_stage_dir returns the parent.
-            # We want to archive the specific dataset run if possible.
             specific_dir = dataset_dir / f"dataset_{dataset_id}"
             if specific_dir.exists():
                 archive_existing_directory(specific_dir, logger)
-            elif dataset_dir.exists():
+            elif dataset_dir.exists() and not is_simple:
                 archive_existing_directory(dataset_dir, logger)
 
         cmd = [
@@ -390,7 +389,13 @@ class ExperimentRunner:
             str(batch_size),
         ]
 
-        self._execute_command(cmd, f"dataset:{task.persona}")
+        if is_simple:
+            cmd.append("--simple-personalization")
+
+        label = f"dataset:{task.persona}"
+        if is_simple:
+            label += " (simple_personalized)"
+        self._execute_command(cmd, label)
 
     def _run_objective_task(self, task: Task) -> None:
         """
@@ -1012,10 +1017,10 @@ class ExperimentRunner:
             Path to dataset directory, or None if not found.
         """
         filter_model = self.config.defaults.get("filter_model", "none")
+        is_simple = prompt_type == "simple_personalized"
 
         personas_to_check = [persona]
         # OPTIMIZATION: If prompt_type is original or control, also check the reference persona
-        # Use novice_user as reference if present, otherwise fallback to the first persona
         reference_persona = (
             "novice_user"
             if "novice_user" in self.config.use_personas
@@ -1040,11 +1045,16 @@ class ExperimentRunner:
             if not dataset_base.exists():
                 continue
 
-            # Look for any dataset directory with files
             for dataset_dir in sorted(dataset_base.iterdir(), reverse=True):
-                if dataset_dir.is_dir() and dataset_dir.name.startswith("dataset_"):
-                    if any(dataset_dir.glob("*.json")):
-                        return dataset_dir
+                if not dataset_dir.is_dir() or not dataset_dir.name.startswith("dataset_"):
+                    continue
+                has_simple_suffix = dataset_dir.name.endswith("_simple")
+                if is_simple and not has_simple_suffix:
+                    continue
+                if not is_simple and has_simple_suffix:
+                    continue
+                if any(dataset_dir.glob("*.json")):
+                    return dataset_dir
 
         return None
 

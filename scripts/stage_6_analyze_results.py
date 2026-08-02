@@ -86,6 +86,7 @@ from src.vibe_testing.analysis.joint_preference import (  # noqa: E402
     ObjectiveConsistencyError,
     compute_cluster_aware_paired_tests_for_joint_preference,
     compute_joint_preference_matrices,
+    compute_joint_preference_matrices_sample_majority,
     compute_joint_preference_long_by_judge,
     compute_objective_accuracy_consistency_metrics,
     format_paired_delta_mark,
@@ -1434,7 +1435,10 @@ def main(args: Optional[List[str]] = None) -> None:
             "winner determination. 'ignore' (default): no change. 'dimension': treat "
             "correctness as an additional dimension vote (weight=5 when dimension-weighted). "
             "'gate': if one model is correct and the other is not, the correct model "
-            "wins automatically (dimension votes are skipped for that sample)."
+            "wins automatically (dimension votes are skipped for that sample). "
+            "'both_correct_is_tie': if both models are correct (pass@1 > 0), the sample "
+            "is forced to be a tie; wins/losses are only computed when at least one model "
+            "is wrong (falls through to dimension comparison otherwise)."
         ),
     )
     parser.add_argument(
@@ -1603,6 +1607,14 @@ def main(args: Optional[List[str]] = None) -> None:
             "If set, skip all non-essential plotting and render ONLY the "
             "`pairwise_dimension_comparison_with_objective*.pdf` figure(s) using the "
             "LIMA/ACL style. This is intended for fast iteration on that figure."
+        ),
+    )
+    parser.add_argument(
+        "--pairwise-lima-variant-titles",
+        action="store_true",
+        help=(
+            "If set, add short prompt-type titles such as 'Original Prompts' and "
+            "'Personalized Prompts' above LIMA-style pairwise dimension figures."
         ),
     )
     parser.add_argument(
@@ -2969,6 +2981,10 @@ def main(args: Optional[List[str]] = None) -> None:
                                         only_dimension_comparison_with_objective=bool(
                                             parsed_args.only_pairwise_dimension_comparison_with_objective
                                         ),
+                                        variant_label=variant_name,
+                                        show_lima_variant_titles=bool(
+                                            parsed_args.pairwise_lima_variant_titles
+                                        ),
                                     )
                                     for key, path in variant_figure_paths.items():
                                         pairwise_figure_paths[
@@ -3188,6 +3204,18 @@ def _write_core_tables(
         delta_with_persona, str(tables_dir / "user_model_deltas.csv"), profiles_df
     )
     table_paths["user_model_deltas"] = str(delta_path)
+
+    if (
+        bundle.simple_personalized_deltas is not None
+        and not bundle.simple_personalized_deltas.empty
+    ):
+        simple_delta_with_persona = bundle.simple_personalized_deltas.copy()
+        simple_delta_path = write_user_model_deltas(
+            simple_delta_with_persona,
+            str(tables_dir / "user_model_deltas_simple_personalized.csv"),
+            profiles_df,
+        )
+        table_paths["user_model_deltas_simple_personalized"] = str(simple_delta_path)
 
     global_path = write_model_overall_summary(
         bundle.global_summary, str(tables_dir / "model_overall_summary.csv")
@@ -3612,11 +3640,41 @@ def _assert_pairwise_rows_canonical(
     raise SystemExit(1)
 
 
+def _format_pairwise_lima_variant_title(variant_label: Optional[str]) -> Optional[str]:
+    """
+    Convert a pairwise prompt variant token into a display title for LIMA figures.
+
+    Args:
+        variant_label: Stage-6 prompt variant token such as ``original`` or
+            ``personalized``.
+
+    Returns:
+        Optional[str]: Human-readable figure title, or ``None`` when no variant is
+        available.
+    """
+    if not variant_label:
+        return None
+
+    normalized = str(variant_label).strip().lower()
+    title_map = {
+        "original": "Original Prompts",
+        "personalized": "Personalized Prompts",
+        "control": "Control Prompts",
+        "combined": "All Prompt Types",
+    }
+    return title_map.get(
+        normalized,
+        f"{str(variant_label).replace('_', ' ').title()} Prompts",
+    )
+
+
 def _render_pairwise_figures(
     figures_dir: Path,
     pairwise_bundle: PairwiseAggregationBundle,
     logger: logging.Logger,
     only_dimension_comparison_with_objective: bool = False,
+    variant_label: Optional[str] = None,
+    show_lima_variant_titles: bool = False,
 ) -> Dict[str, str]:
     """
     Render pairwise comparison analysis figures.
@@ -3625,6 +3683,11 @@ def _render_pairwise_figures(
         figures_dir: Directory to save figures to.
         pairwise_bundle: Aggregated pairwise analysis results.
         logger: Logger for status messages.
+        only_dimension_comparison_with_objective: Whether to render only the LIMA-style
+            dimension-comparison figure with objective metrics.
+        variant_label: Prompt variant being rendered (for example ``original``).
+        show_lima_variant_titles: Whether to add a short variant title such as
+            ``Original Prompts`` above LIMA-style figures.
 
     Returns:
         Dict mapping figure names to file paths.
@@ -3636,6 +3699,11 @@ def _render_pairwise_figures(
         sample_df = (
             pairwise_bundle.sample_level
             if not pairwise_bundle.sample_level.empty
+            else None
+        )
+        lima_title = (
+            _format_pairwise_lima_variant_title(variant_label)
+            if show_lima_variant_titles
             else None
         )
 
@@ -3676,9 +3744,11 @@ def _render_pairwise_figures(
                     str(
                         figures_dir / "pairwise_dimension_comparison_with_objective.pdf"
                     ),
+                    title=lima_title,
                     model_pair=model_pairs[0],
                     sample_df=sample_df,
                     style="lima",
+                    show_lima_title=show_lima_variant_titles,
                 )
                 figure_paths["pairwise_dimension_comparison_with_objective"] = str(path)
             else:
@@ -3691,9 +3761,11 @@ def _render_pairwise_figures(
                             figures_dir
                             / f"pairwise_dimension_comparison_with_objective_{safe_pair}.pdf"
                         ),
+                        title=lima_title,
                         model_pair=pair,
                         sample_df=sample_df,
                         style="lima",
+                        show_lima_title=show_lima_variant_titles,
                     )
                     figure_paths[
                         f"pairwise_dimension_comparison_with_objective_{safe_pair}"
@@ -3819,9 +3891,11 @@ def _render_pairwise_figures(
                     str(
                         figures_dir / "pairwise_dimension_comparison_with_objective.pdf"
                     ),
+                    title=lima_title,
                     model_pair=model_pairs[0],
                     sample_df=sample_df,
                     style="lima",
+                    show_lima_title=show_lima_variant_titles,
                 )
                 figure_paths["pairwise_dimension_comparison_with_objective"] = str(path)
 
@@ -3842,9 +3916,11 @@ def _render_pairwise_figures(
                             figures_dir
                             / f"pairwise_dimension_comparison_with_objective_{safe_pair}.pdf"
                         ),
+                        title=lima_title,
                         model_pair=pair,
                         sample_df=sample_df,
                         style="lima",
+                        show_lima_title=show_lima_variant_titles,
                     )
                     figure_paths[
                         f"pairwise_dimension_comparison_with_objective_{safe_pair}"
@@ -3954,7 +4030,10 @@ def _write_joint_preference_long_only_outputs(
     This helper is the minimal Stage-6 joint preference export path. It writes:
     - joint_preference_long.csv (LLM judges only)
     - joint_preference_long_by_judge.csv (all judges incl. human)
-    - joint_preference_overall.tex (LLM judges only)
+    - joint_preference_overall.tex (LLM judges only; one vote per judge row)
+    - joint_preference_overall_disjoint_judges.tex (LLM judges only; excludes
+      self-judge rows where the judge matches one compared model)
+    - joint_preference_overall_sample_majority.tex (LLM judges only; one vote per sample)
     - joint_preference_judge_agreement.tex (LLM judges only)
     - joint_preference_human_streamlit_agreement.tex (all judges incl. human)
     - joint_preference_human_streamlit_dimension_agreement.tex (all judges incl. human)
@@ -4004,9 +4083,20 @@ def _write_joint_preference_long_only_outputs(
         prompt_types=prompt_types,
         alpha=alpha,
     )
+    majority_matrices = compute_joint_preference_matrices_sample_majority(
+        pairwise_df,
+        personas=personas,
+        prompt_types=prompt_types,
+        alpha=alpha,
+    )
     if not matrices:
         raise ValueError(
             "No joint matrices produced (insufficient model coverage); cannot export joint preference tables."
+        )
+    if not majority_matrices:
+        raise ValueError(
+            "No sample-majority joint matrices produced; cannot export the sample-majority "
+            "joint preference table."
         )
 
     # Global long-form CSV (across judges)
@@ -4560,6 +4650,27 @@ def _write_joint_preference_long_only_outputs(
             prompt_types=prompt_types,
         )
     )
+    out_paths["overall_latex_disjoint_judges"] = _write_disjoint_joint_preference_overall_latex(
+        pairwise_df=pairwise_df,
+        tables_dir=tables_dir,
+        personas=personas,
+        prompt_types=prompt_types,
+        alpha=alpha,
+        logger=logger,
+    )
+    out_paths["overall_latex_sample_majority"] = str(
+        write_joint_preference_overall_latex(
+            matrices=majority_matrices,
+            output_path=str(tables_dir / "joint_preference_overall_sample_majority.tex"),
+            personas=personas,
+            prompt_types=prompt_types,
+            caption=(
+                "Pairwise win-rate preference matrices (joint across models, "
+                "sample-level majority vote across judges)."
+            ),
+            label="tab:pairwise-joint-preference-sample-majority",
+        )
+    )
     out_paths["judge_agreement_latex"] = str(
         write_joint_preference_judge_agreement_latex(
             pairwise_df=pairwise_df,
@@ -4578,18 +4689,138 @@ def _write_joint_preference_long_only_outputs(
             disable_metrics=bool(judge_agreement_disable),
         )
     )
-    out_paths["human_streamlit_dimension_agreement_latex"] = str(
-        write_joint_preference_streamlit_dimension_agreement_latex(
-            pairwise_df=full_pairwise_df,
-            output_path=str(
-                tables_dir / "joint_preference_human_streamlit_dimension_agreement.tex"
-            ),
-            judge_column="judge_model_name",
-            disable_metrics=bool(judge_agreement_disable),
+    try:
+        out_paths["human_streamlit_dimension_agreement_latex"] = str(
+            write_joint_preference_streamlit_dimension_agreement_latex(
+                pairwise_df=full_pairwise_df,
+                output_path=str(
+                    tables_dir / "joint_preference_human_streamlit_dimension_agreement.tex"
+                ),
+                judge_column="judge_model_name",
+                disable_metrics=bool(judge_agreement_disable),
+            )
         )
-    )
+    except ValueError as exc:
+        logger.warning(
+            "Skipping Streamlit-style dimension agreement LaTeX export: %s",
+            exc,
+        )
 
     return out_paths
+
+
+def _filter_joint_preference_disjoint_judge_rows(
+    pairwise_df: pd.DataFrame,
+    *,
+    logger: logging.Logger,
+    judge_column: str = "judge_model_name",
+) -> pd.DataFrame:
+    """
+    Keep only joint-preference rows judged by a model outside the compared pair.
+
+    Args:
+        pairwise_df: Finalized LLM-only pairwise rows used for joint preference.
+        logger: Logger used for audit-style filtering summaries.
+        judge_column: Column containing the judge model identifier.
+
+    Returns:
+        pd.DataFrame: Filtered copy containing only disjoint-judge rows.
+
+    Raises:
+        ValueError: If required pairwise columns are missing.
+    """
+    if pairwise_df is None or pairwise_df.empty:
+        logger.info(
+            "Disjoint-judge joint preference filtering skipped because pairwise_df is empty."
+        )
+        return pd.DataFrame(columns=[] if pairwise_df is None else pairwise_df.columns)
+
+    required_columns = [judge_column, "model_a_name", "model_b_name"]
+    missing_columns = [col for col in required_columns if col not in pairwise_df.columns]
+    if missing_columns:
+        raise ValueError(
+            "Cannot filter disjoint judges because required columns are missing: "
+            + ", ".join(sorted(missing_columns))
+        )
+
+    filtered_df = pairwise_df.copy()
+    judge_names = filtered_df[judge_column].apply(canonicalize_model_name)
+    model_a_names = filtered_df["model_a_name"].apply(canonicalize_model_name)
+    model_b_names = filtered_df["model_b_name"].apply(canonicalize_model_name)
+
+    judge_present_mask = judge_names.astype(str).str.strip() != ""
+    self_judge_mask = judge_present_mask & (
+        (judge_names == model_a_names) | (judge_names == model_b_names)
+    )
+    keep_mask = judge_present_mask & (~self_judge_mask)
+
+    logger.info(
+        "Filtered joint preference rows to disjoint judges: kept %d/%d rows, "
+        "excluded %d self-judge rows and %d rows with empty judge identifiers.",
+        int(keep_mask.sum()),
+        len(filtered_df),
+        int(self_judge_mask.sum()),
+        int((~judge_present_mask).sum()),
+    )
+    return filtered_df.loc[keep_mask].copy()
+
+
+def _write_disjoint_joint_preference_overall_latex(
+    *,
+    pairwise_df: pd.DataFrame,
+    tables_dir: Path,
+    personas: List[str],
+    prompt_types: List[str],
+    alpha: float,
+    logger: logging.Logger,
+) -> str:
+    """
+    Write a second joint-preference overall LaTeX table using disjoint judges only.
+
+    Args:
+        pairwise_df: Finalized LLM-only pairwise rows used for the standard export.
+        tables_dir: Joint-preference tables directory.
+        personas: Persona ordering used by the standard export.
+        prompt_types: Prompt-type ordering used by the standard export.
+        alpha: Significance threshold for joint-preference aggregation.
+        logger: Logger used for filtering/export summaries.
+
+    Returns:
+        str: Path to the written disjoint-judge LaTeX table.
+    """
+    filtered_df = _filter_joint_preference_disjoint_judge_rows(
+        pairwise_df,
+        logger=logger,
+    )
+    matrices = (
+        compute_joint_preference_matrices(
+            filtered_df,
+            personas=personas,
+            prompt_types=prompt_types,
+            alpha=alpha,
+        )
+        if not filtered_df.empty
+        else {}
+    )
+    output_path = tables_dir / "joint_preference_overall_disjoint_judges.tex"
+    path = write_joint_preference_overall_latex(
+        matrices=matrices,
+        output_path=str(output_path),
+        personas=personas,
+        prompt_types=prompt_types,
+        caption=(
+            "Pairwise win-rate preference matrices (joint across models, "
+            "disjoint judges only)."
+        ),
+        label="tab:pairwise-joint-preference-disjoint-judges",
+    )
+    if not matrices:
+        logger.warning(
+            "Disjoint-judge joint preference export had no remaining comparable rows; "
+            "wrote placeholder LaTeX to %s.",
+            path,
+        )
+    return str(path)
 
 
 def _write_joint_preference_outputs(
@@ -4630,6 +4861,8 @@ def _write_joint_preference_outputs(
     - CSV exports: per-slice matrices + a global long-form table -- LLM judges only
     - joint_preference_long_by_judge.csv -- all judges incl. human
     - LaTeX export: overall (Level C) view -- LLM judges only
+    - LaTeX export: disjoint-judge overall (Level C) view -- LLM judges only
+    - LaTeX export: sample-majority overall (Level C) view -- LLM judges only
     - LaTeX agreement exports -- all judges incl. human
     """
     if pairwise_df is None or pairwise_df.empty:
@@ -4666,8 +4899,17 @@ def _write_joint_preference_outputs(
         prompt_types=prompt_types,
         alpha=alpha,
     )
+    majority_matrices = compute_joint_preference_matrices_sample_majority(
+        pairwise_df,
+        personas=personas,
+        prompt_types=prompt_types,
+        alpha=alpha,
+    )
     if not matrices:
         logger.info("No joint matrices produced (insufficient model coverage).")
+        return {}, {}
+    if not majority_matrices:
+        logger.info("No sample-majority joint matrices produced (insufficient model coverage).")
         return {}, {}
 
     table_paths: Dict[str, str] = {}
@@ -5401,6 +5643,27 @@ def _write_joint_preference_outputs(
             prompt_types=prompt_types,
         )
     )
+    table_paths["overall_latex_disjoint_judges"] = _write_disjoint_joint_preference_overall_latex(
+        pairwise_df=pairwise_df,
+        tables_dir=tables_dir,
+        personas=personas,
+        prompt_types=prompt_types,
+        alpha=alpha,
+        logger=logger,
+    )
+    table_paths["overall_latex_sample_majority"] = str(
+        write_joint_preference_overall_latex(
+            matrices=majority_matrices,
+            output_path=str(tables_dir / "joint_preference_overall_sample_majority.tex"),
+            personas=personas,
+            prompt_types=prompt_types,
+            caption=(
+                "Pairwise win-rate preference matrices (joint across models, "
+                "sample-level majority vote across judges)."
+            ),
+            label="tab:pairwise-joint-preference-sample-majority",
+        )
+    )
     table_paths["judge_agreement_latex"] = str(
         write_joint_preference_judge_agreement_latex(
             pairwise_df=pairwise_df,
@@ -5419,16 +5682,22 @@ def _write_joint_preference_outputs(
             disable_metrics=bool(judge_agreement_disable),
         )
     )
-    table_paths["human_streamlit_dimension_agreement_latex"] = str(
-        write_joint_preference_streamlit_dimension_agreement_latex(
-            pairwise_df=full_pairwise_df,
-            output_path=str(
-                tables_dir / "joint_preference_human_streamlit_dimension_agreement.tex"
-            ),
-            judge_column="judge_model_name",
-            disable_metrics=bool(judge_agreement_disable),
+    try:
+        table_paths["human_streamlit_dimension_agreement_latex"] = str(
+            write_joint_preference_streamlit_dimension_agreement_latex(
+                pairwise_df=full_pairwise_df,
+                output_path=str(
+                    tables_dir / "joint_preference_human_streamlit_dimension_agreement.tex"
+                ),
+                judge_column="judge_model_name",
+                disable_metrics=bool(judge_agreement_disable),
+            )
         )
-    )
+    except ValueError as exc:
+        logger.warning(
+            "Skipping Streamlit-style dimension agreement LaTeX export: %s",
+            exc,
+        )
 
     logger.info(
         "Joint preference outputs: %d table(s), %d figure(s)",

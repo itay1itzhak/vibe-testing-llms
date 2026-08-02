@@ -84,6 +84,16 @@ def main(args: Optional[List[str]] = None, model: Optional[BaseModel] = None):
         action="store_true",
         help="Archive any existing dataset contents under an 'old/<timestamp>' directory before rebuilding.",
     )
+    parser.add_argument(
+        "--simple-personalization",
+        action="store_true",
+        help=(
+            "Build a simple-personalized dataset instead of the full personalized "
+            "dataset. Simple personalization produces minimally-modified prompts "
+            "(at most 3-4 extra words, no new constraints) that subtly reflect the "
+            "user persona. Variations use prompt_type='simple_personalized'."
+        ),
+    )
     add_common_args(parser)
     parsed_args = parser.parse_args(args)
 
@@ -187,15 +197,26 @@ def main(args: Optional[List[str]] = None, model: Optional[BaseModel] = None):
         batch_size=parsed_args.batch_size,
         artifacts_dir=str(meta_dir),
     )
+    is_simple = getattr(parsed_args, "simple_personalization", False)
+    mode_label = "simple personalized" if is_simple else "personalized"
     logger.info(
-        f"Building dataset with {parsed_args.num_variations} variations per {len(selected_samples)} samples."
+        "Building %s dataset with %d variations per %d samples.",
+        mode_label,
+        parsed_args.num_variations,
+        len(selected_samples),
     )
     # --- Build Dataset ---
-    personalized_samples = personalizer.build_dataset(
-        selected_samples, user_profile, parsed_args.num_variations
-    )
+    if is_simple:
+        personalized_samples = personalizer.build_simple_dataset(
+            selected_samples, user_profile, parsed_args.num_variations
+        )
+    else:
+        personalized_samples = personalizer.build_dataset(
+            selected_samples, user_profile, parsed_args.num_variations
+        )
 
     # --- Save Output ---
+    evaluation_type = "simple_personalized" if is_simple else "personalized"
     total_variations = 0
     personalization_model_name = getattr(model, "model_name", parsed_args.model_name)
     for personalized_sample in personalized_samples:
@@ -204,13 +225,19 @@ def main(args: Optional[List[str]] = None, model: Optional[BaseModel] = None):
         output_path = run_context.artifact_path(
             base=dataset_dir,
             artifact_type="3",
-            evaluation_type="personalized",
+            evaluation_type=evaluation_type,
             detail=f"sample-{personalized_sample.original_sample.source_benchmark}-{normalized_sample_id}",
             version=0,
             ext="json",
         )
 
         payload = personalized_sample.model_dump()
+
+        if is_simple:
+            for var_dict in payload.get("variations", []):
+                var_dict["prompt_type"] = "simple_personalized"
+                var_dict["variant_label"] = "simple_personalized"
+
         payload["_model_metadata"] = {
             "role": "personalization",
             "model_name": personalization_model_name,

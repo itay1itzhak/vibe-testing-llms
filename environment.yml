@@ -342,9 +342,9 @@ dependencies:
       - xxhash==3.5.0
       - yarl==1.20.1
       - zipp==3.23.0
-variables:
-  HF_HOME: /mnt/nlp
-  HUGGINGFACE_HUB_CACHE: /mnt/nlp/hub
-  HF_DATASETS_CACHE: /mnt/nlp/datasets
-  TRANSFORMERS_CACHE: /mnt/nlp/transformers
-prefix: /home/itay.itzhak/miniconda3/envs/vbt
+# variables:
+#   HF_HOME: /your/path/to/huggingface/cache
+#   HUGGINGFACE_HUB_CACHE: /your/path/to/huggingface/cache/hub
+#   HF_DATASETS_CACHE: /your/path/to/huggingface/cache/datasets
+#   TRANSFORMERS_CACHE: /your/path/to/huggingface/cache/transformers
+# prefix: /your/path/to/conda/envs/my_env

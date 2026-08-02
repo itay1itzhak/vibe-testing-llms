@@ -1,0 +1,53 @@
+# Example experiment configuration
+# This file defines the full experiment matrix:
+# - Which personas to evaluate
+# - Which models to use for dataset generation
+# - Which models to evaluate
+# - Which models to use as judges
+#
+# Usage:
+#   python scripts/run_experiment.py configs/experiments/example_experiment.yaml
+#   python scripts/run_experiment.py configs/experiments/example_experiment.yaml --dry-run
+#   python scripts/run_experiment.py configs/experiments/example_experiment.yaml --only-personas researcher_user
+#   python scripts/run_experiment.py configs/experiments/example_experiment.yaml --model-tags api
+
+name: "gpt5_persona_comparison"
+base_dir: "runs/experiments/gpt5_comparison"
+
+# Include reusable component definitions
+include:
+  - "components/personas.yaml"
+  - "components/models.yaml"
+
+# Default settings for all stages
+defaults:
+  benchmarks:
+    - "mbpp_plus"
+  num_samples: 20
+  num_variations: 2
+  filter_model: "none"
+  dataset_type: "function"
+  # Prompt types to evaluate. Include "simple_personalized" to also generate
+  # minimally-modified prompts that control for length/constraint confounds.
+  prompt_types:
+    - "original"
+    - "personalized"
+    - "simple_personalized"
+
+# Model used to generate personalized datasets (stages 1-3)
+generator: "gpt5"
+
+# Which personas to include in this experiment
+# Can use names from personas.yaml or filter by tags
+use_personas:
+  - "researcher_user"
+  - "novice_user"
+
+# Which models to evaluate objectively (stage 4)
+use_models:
+  - "gpt-oss-low-effort"
+  - "gpt5"
+
+# Which models to use as subjective judges (stage 5)
+use_judges:
+  - "gpt5"

@@ -382,7 +382,7 @@ def main(args: Optional[List[str]] = None, model: Optional[BaseModel] = None):
     parser.add_argument(
         "--prompt-types",
         nargs="+",
-        choices=["original", "personalized", "control"],
+        choices=["original", "personalized", "control", "simple_personalized"],
         help=(
             "Prompt types to evaluate in this run. "
             "When omitted, all prompt types are evaluated together and results are written "

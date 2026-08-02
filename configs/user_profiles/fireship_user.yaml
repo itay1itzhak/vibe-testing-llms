@@ -1,0 +1,26 @@
+user_id: "fireship_webdev_01"
+description: "I am a fast-paced web development educator and creator who builds and explains full-stack apps, JavaScript frameworks, Firebase backends, and modern developer tools. I value code that is practical, concise, visually clear, and easy to teach, with strong defaults, minimal boilerplate, and enough polish to work in real projects."
+persona_description: "A fast-paced web development educator who wants practical, concise, teachable code with strong defaults and minimal boilerplate."
+
+# Input-oriented dimensions
+input_dimensions:
+  task_complexity_gradient: [0.35, 0.85] # Focus on practical web development tasks from quick demos to production-minded implementations
+  real_world_context_embedding: "full-stack web development, JavaScript frameworks, Firebase, developer tools, tutorials, and concise technical education"
+  persona_based_task_framing: "experienced web development educator" # The model should act like a sharp technical collaborator who can explain clearly and move fast
+  preference_and_underspecification_handling:
+    default_behavior: "proceed with practical defaults; avoid long clarification loops; mention assumptions briefly and offer concise alternatives when useful"
+    desired_clarification_style: "short, direct questions only when requirements materially affect the implementation"
+
+# Output-oriented dimensions
+output_dimensions:
+  clarity_and_comprehensibility: 5 # (Scale 1-5, 5 is most important)
+  workflow_fit: 5
+  plus_correctness: 4
+  correctness: 5 # Used only when correctness gating is not applied
+  friction_and_frustration: 5
+  reliability: 4
+  persona_consistency_and_context_awareness: 5
+  safety_and_refusal_behavior: 3
+  anthropomorphism: 2
+  creativity_and_originality: 4
+  expressive_style: "fast, concise, practical, and slightly punchy; favors clean examples, modern web patterns, minimal boilerplate, and clear explanations that are easy to teach"

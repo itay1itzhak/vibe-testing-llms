@@ -143,6 +143,55 @@ class ExperimentState:
         logger.info("Found %d personas with existing datasets", len(existing))
         return existing
 
+    def get_existing_simple_datasets(self) -> Set[str]:
+        """
+        Find personas that have existing simple-personalized datasets.
+
+        Scans for dataset directories ending with '_simple' under:
+        {base_dir}/{persona}/3_vibe_dataset/gen_model_{generator}/filter_model_{filter}/
+
+        Returns:
+            Set of persona names with existing simple personalized datasets.
+        """
+        existing: Set[str] = set()
+        generator = self.config.generator
+        filter_model = self.config.defaults.get("filter_model", "none")
+
+        for persona in self.config.use_personas:
+            dataset_base = (
+                self.base_dir
+                / persona
+                / "3_vibe_dataset"
+                / f"gen_model_{generator}"
+                / f"filter_model_{filter_model}"
+            )
+
+            if not dataset_base.exists():
+                continue
+
+            for dataset_dir in dataset_base.iterdir():
+                if (
+                    dataset_dir.is_dir()
+                    and dataset_dir.name.startswith("dataset_")
+                    and dataset_dir.name.endswith("_simple")
+                ):
+                    json_files = list(dataset_dir.glob("*.json"))
+                    if json_files:
+                        logger.debug(
+                            "Found existing simple personalized dataset for %s: %s (%d files)",
+                            persona,
+                            dataset_dir,
+                            len(json_files),
+                        )
+                        existing.add(persona)
+                        break
+
+        logger.info(
+            "Found %d personas with existing simple personalized datasets",
+            len(existing),
+        )
+        return existing
+
     def get_existing_objective_evals(
         self,
     ) -> Set[Tuple[str, str, Optional[str]]]:

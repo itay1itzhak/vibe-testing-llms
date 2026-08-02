@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import zlib
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -26,7 +26,7 @@ from scipy import stats
 
 LOGGER = logging.getLogger(__name__)
 
-PROMPT_TYPES = ("original", "personalized", "control")
+PROMPT_TYPES = ("original", "personalized", "control", "simple_personalized")
 OBJECTIVE_PASS_AT_1_COLUMNS = (
     "obj_overall_pass_at_1",
     "obj_plus_pass_at_1",
@@ -314,6 +314,87 @@ def compute_joint_preference_matrices(
                 persona=persona,
                 prompt_type=prompt_type,
                 alpha=alpha,
+                aggregate_judges_by_sample=False,
+            )
+            if matrix is not None:
+                results[(persona, prompt_type)] = matrix
+    return results
+
+
+def compute_joint_preference_matrices_sample_majority(
+    pairwise_sample_df: pd.DataFrame,
+    personas: Optional[Iterable[str]] = None,
+    prompt_types: Optional[Iterable[str]] = None,
+    alpha: float = 0.05,
+) -> Dict[Tuple[str, str], JointPreferenceMatrix]:
+    """
+    Compute joint preference matrices using one majority-vote outcome per sample.
+
+    This mirrors :func:`compute_joint_preference_matrices`, but when multiple judge
+    rows exist for the same sample and model pair it first collapses them to a
+    single majority-vote label. The input rows are expected to already contain the
+    final Stage-6 ``overall_winner_label`` values after any dimension omissions,
+    correctness handling, and related recomputation.
+
+    Args:
+        pairwise_sample_df: Sample-level pairwise DataFrame from
+            AnalysisInputLoader.load_pairwise_results().
+        personas: Optional iterable of personas to include. If None, uses all.
+        prompt_types: Optional iterable of prompt types to include. If None, uses
+            the canonical set (original, personalized, control).
+        alpha: Significance threshold for '*' markers (two-sided binomial test).
+
+    Returns:
+        Dict mapping (persona, prompt_type) -> JointPreferenceMatrix.
+
+    Raises:
+        JointPreferenceError: If required columns are missing or alpha invalid.
+    """
+    if pairwise_sample_df is None or pairwise_sample_df.empty:
+        return {}
+
+    if not (0.0 < float(alpha) < 1.0):
+        raise JointPreferenceError(f"alpha must be in (0,1). Got: {alpha}")
+
+    required_cols = [
+        "user_id",
+        "variant_label",
+        "task_id",
+        "model_a_name",
+        "model_b_name",
+        "overall_winner_label",
+    ]
+    missing = [c for c in required_cols if c not in pairwise_sample_df.columns]
+    if missing:
+        raise JointPreferenceError(
+            "pairwise_sample_df is missing required columns for sample-majority "
+            "joint preference computation: " + ", ".join(missing)
+        )
+
+    prompt_types_final = (
+        list(prompt_types) if prompt_types is not None else list(PROMPT_TYPES)
+    )
+    personas_final = (
+        list(personas)
+        if personas is not None
+        else sorted(pairwise_sample_df["user_id"].dropna().unique().tolist())
+    )
+
+    results: Dict[Tuple[str, str], JointPreferenceMatrix] = {}
+    for persona in personas_final:
+        persona_df = pairwise_sample_df[pairwise_sample_df["user_id"] == persona].copy()
+        if persona_df.empty:
+            continue
+        for prompt_type in prompt_types_final:
+            slice_df = persona_df[persona_df["variant_label"] == prompt_type].copy()
+            if slice_df.empty:
+                continue
+            matrix = compute_joint_preference_matrix_for_slice(
+                slice_df,
+                persona=persona,
+                prompt_type=prompt_type,
+                alpha=alpha,
+                aggregate_judges_by_sample=True,
             )
             if matrix is not None:
                 results[(persona, prompt_type)] = matrix
@@ -500,6 +581,7 @@ def compute_joint_preference_matrix_for_slice(
     persona: str,
     prompt_type: str,
     alpha: float = 0.05,
+    aggregate_judges_by_sample: bool = False,
 ) -> Optional[JointPreferenceMatrix]:
     """
     Compute joint matrices for one persona + prompt type slice.
@@ -510,6 +592,8 @@ def compute_joint_preference_matrix_for_slice(
         persona: Persona identifier (for metadata).
         prompt_type: Prompt type/variant label (for metadata).
         alpha: Significance threshold.
+        aggregate_judges_by_sample: If True, collapse multiple judge rows for the
+            same sample to a single majority-vote label before counting wins.
 
     Returns:
         JointPreferenceMatrix, or None if fewer than 2 models are present.
@@ -549,7 +633,11 @@ def compute_joint_preference_matrix_for_slice(
             if i == j:
                 continue
             outcomes = _compute_pair_outcomes(
-                pairwise_slice_df, model_x, model_y, alpha=alpha
+                pairwise_slice_df,
+                model_x,
+                model_y,
+                alpha=alpha,
+                aggregate_judges_by_sample=aggregate_judges_by_sample,
             )
             long_records.append(outcomes)
 
@@ -587,6 +675,7 @@ def _compute_pair_outcomes(
     row_model: str,
     col_model: str,
     alpha: float,
+    aggregate_judges_by_sample: bool = False,
 ) -> Dict[str, object]:
     """
     Compute wins/total/win-rate and p-value for (row_model vs col_model).
@@ -608,34 +697,16 @@ def _compute_pair_outcomes(
     )
     subset = pairwise_slice_df[mask_forward_all | mask_reverse_all].copy()
 
-    total = int(len(subset))
-    wins = 0
-    losses = 0
-    ties = 0
-
-    if total > 0:
-        # Recompute masks within subset to avoid pandas reindex warnings.
-        mask_forward = (subset["model_a_name"] == row_model) & (
-            subset["model_b_name"] == col_model
-        )
-        mask_reverse = (subset["model_a_name"] == col_model) & (
-            subset["model_b_name"] == row_model
-        )
-        forward = subset[mask_forward]
-        reverse = subset[mask_reverse]
-
-        # Forward rows: overall_winner_label refers to model_a/model_b in that row
-        wins += int((forward["overall_winner_label"] == "model_a").sum())
-        losses += int((forward["overall_winner_label"] == "model_b").sum())
-        ties += int((forward["overall_winner_label"] == "tie").sum())
-
-        # Reverse rows: row_model is model_b in that row
-        wins += int((reverse["overall_winner_label"] == "model_b").sum())
-        losses += int((reverse["overall_winner_label"] == "model_a").sum())
-        ties += int((reverse["overall_winner_label"] == "tie").sum())
-
+    oriented_labels = _collect_pair_outcome_labels(
+        subset,
+        row_model=row_model,
+        col_model=col_model,
+        aggregate_judges_by_sample=aggregate_judges_by_sample,
+    )
+    wins, losses, ties, total = _count_oriented_outcome_labels(oriented_labels)
     win_rate = (wins / total) if total > 0 else np.nan
     n_excl_ties = wins + losses
+    win_rate_excl_ties = (wins / n_excl_ties) if n_excl_ties > 0 else np.nan
     if total > 0:
         p_value = float(stats.binomtest(wins, total, p=0.5).pvalue)
     else:
@@ -662,10 +733,145 @@ def _compute_pair_outcomes(
         "tie_rate": (float(ties) / float(total)) if total > 0 else np.nan,
         "n_excl_ties": int(n_excl_ties),
         "win_rate": float(win_rate) if total > 0 else np.nan,
+        "win_rate_excl_ties": float(win_rate_excl_ties) if n_excl_ties > 0 else np.nan,
         "p_value": float(p_value),
         "significant": significant,
         "formatted_win_rate": formatted,
     }
+
+
+def _collect_pair_outcome_labels(
+    pairwise_subset_df: pd.DataFrame,
+    *,
+    row_model: str,
+    col_model: str,
+    aggregate_judges_by_sample: bool,
+) -> List[str]:
+    """Collect oriented outcome labels for one directed model pair."""
+    if pairwise_subset_df is None or pairwise_subset_df.empty:
+        return []
+
+    labels_by_sample: Dict[Tuple[str, ...], List[str]] = {}
+    oriented_labels: List[str] = []
+    for _, row in pairwise_subset_df.iterrows():
+        label = _orient_overall_winner_label(row, row_model=row_model, col_model=col_model)
+        if aggregate_judges_by_sample:
+            sample_key = _build_pairwise_sample_key(row)
+            labels_by_sample.setdefault(sample_key, []).append(label)
+        else:
+            oriented_labels.append(label)
+
+    if not aggregate_judges_by_sample:
+        return oriented_labels
+
+    return [
+        _resolve_sample_majority_label(sample_labels)
+        for _, sample_labels in sorted(labels_by_sample.items(), key=lambda item: item[0])
+    ]
+
+
+def _orient_overall_winner_label(
+    row: pd.Series,
+    *,
+    row_model: str,
+    col_model: str,
+) -> str:
+    """Map a row's overall winner label onto the directed pair orientation."""
+    model_a = row.get("model_a_name")
+    model_b = row.get("model_b_name")
+    winner = str(row.get("overall_winner_label") or "tie").strip().lower()
+
+    if str(model_a) == str(row_model) and str(model_b) == str(col_model):
+        if winner == "model_a":
+            return "row_win"
+        if winner == "model_b":
+            return "col_win"
+        return "tie"
+
+    if str(model_a) == str(col_model) and str(model_b) == str(row_model):
+        if winner == "model_a":
+            return "col_win"
+        if winner == "model_b":
+            return "row_win"
+        return "tie"
+
+    raise JointPreferenceError(
+        "Encountered pairwise row that does not match the requested model pair. "
+        f"requested=({row_model!r},{col_model!r}) "
+        f"row_models=({model_a!r},{model_b!r})"
+    )
+
+
+def _build_pairwise_sample_key(row: pd.Series) -> Tuple[str, ...]:
+    """Build a stable sample identifier using Stage-6 precedence rules."""
+    raw_task_id = row.get("raw_task_id")
+    if raw_task_id is not None and not pd.isna(raw_task_id) and str(raw_task_id).strip():
+        return ("raw_task_id", str(raw_task_id))
+
+    task_id = row.get("task_id")
+    variant_id = row.get("variant_id")
+    if (
+        task_id is not None
+        and not pd.isna(task_id)
+        and str(task_id).strip()
+        and variant_id is not None
+        and not pd.isna(variant_id)
+        and str(variant_id).strip()
+    ):
+        return ("task_variant", str(task_id), str(variant_id))
+
+    if task_id is not None and not pd.isna(task_id) and str(task_id).strip():
+        return ("task_id", str(task_id))
+
+    raise JointPreferenceError(
+        "Sample-majority joint preference requires task identity columns. "
+        "Expected one of raw_task_id, (task_id + variant_id), or task_id."
+    )
+
+
+def _resolve_sample_majority_label(labels: Sequence[str]) -> str:
+    """Resolve one sample's majority-vote label across judges."""
+    normalized = [str(label).strip() for label in labels if str(label).strip()]
+    if not normalized:
+        return "tie"
+    if len(normalized) == 1:
+        return normalized[0]
+    if len(normalized) == 2:
+        unique = set(normalized)
+        non_tie = [label for label in normalized if label != "tie"]
+        if len(unique) == 1:
+            return normalized[0]
+        if "tie" in unique and len(non_tie) == 1:
+            return non_tie[0]
+        return "tie"
+
+    counts: Dict[str, int] = {}
+    for label in normalized:
+        counts[label] = counts.get(label, 0) + 1
+
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    if not ranked:
+        return "tie"
+    top_count = ranked[0][1]
+    if sum(1 for _, count in ranked if count == top_count) != 1:
+        return "tie"
+    return ranked[0][0]
+
+
+def _count_oriented_outcome_labels(labels: Sequence[str]) -> Tuple[int, int, int, int]:
+    """Count wins, losses, ties, and total from oriented outcome labels."""
+    wins = 0
+    losses = 0
+    ties = 0
+    for label in labels:
+        if label == "row_win":
+            wins += 1
+        elif label == "col_win":
+            losses += 1
+        else:
+            ties += 1
+    total = wins + losses + ties
+    return wins, losses, ties, total
 
 
 def _format_win_rate(win_rate: float, significant: bool, total: int) -> str:

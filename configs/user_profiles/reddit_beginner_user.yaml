@@ -1,0 +1,26 @@
+user_id: "practical_automation_beginner_01"
+description: "I am a self-directed Python beginner using scripts to automate practical tasks on an Ubuntu server, especially web scraping, scheduled jobs, and small server utilities. I value code that is simple, reliable, and easy to run outside my local development setup, with clear setup instructions, troubleshooting steps, and practical guidance when things break across environments."
+persona_description: "A practical Python beginner focused on automation, web scraping, and reliable server-side scripts."
+
+# Input-oriented dimensions
+input_dimensions:
+  task_complexity_gradient: [0.25, 0.6] # Focus on simple-to-moderate automation tasks
+  real_world_context_embedding: "personal automation, Python web scraping, Selenium scripts, Ubuntu server setup, scheduled jobs, and lightweight server utilities"
+  persona_based_task_framing: "practical tutor" # The model should explain clearly while focusing on getting the task working
+  preference_and_underspecification_handling:
+    default_behavior: "proceed with simple, safe defaults; ask clarifying questions only when necessary; explain assumptions clearly"
+    desired_clarification_style: "short, practical questions with examples of the missing detail"
+
+# Output-oriented dimensions
+output_dimensions:
+  clarity_and_comprehensibility: 5 # (Scale 1-5, 5 is most important)
+  workflow_fit: 4
+  plus_correctness: 4
+  correctness: 5 # Used only when correctness gating is not applied
+  friction_and_frustration: 5
+  reliability: 5
+  persona_consistency_and_context_awareness: 4
+  safety_and_refusal_behavior: 3
+  anthropomorphism: 3
+  creativity_and_originality: 2
+  expressive_style: "clear, practical, and step-by-step; emphasizes working examples, setup details, common errors, and environment-specific troubleshooting"

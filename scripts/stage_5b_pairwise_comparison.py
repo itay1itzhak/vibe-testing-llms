@@ -25,6 +25,7 @@ except Exception:
     pass
 
 import argparse
+from collections import defaultdict
 import glob
 import json
 import logging
@@ -67,6 +68,28 @@ from src.vibe_testing.utils import (
     seed_everything,
     setup_logger,
 )
+
+
+def _format_prompt_type_count_summary(counts: Dict[str, int]) -> str:
+    """
+    Format prompt-type counts for logs in a stable, readable order.
+
+    Args:
+        counts: Mapping from prompt type to count.
+
+    Returns:
+        Human-readable comma-separated summary string.
+    """
+    preferred_order = ["original", "personalized", "simple_personalized", "control"]
+    parts: List[str] = []
+    seen = set()
+    for prompt_type in preferred_order:
+        if prompt_type in counts:
+            parts.append(f"{prompt_type}={counts[prompt_type]}")
+            seen.add(prompt_type)
+    for prompt_type in sorted(k for k in counts.keys() if k not in seen):
+        parts.append(f"{prompt_type}={counts[prompt_type]}")
+    return ", ".join(parts) if parts else "none"
 
 
 def _unwrap_modified_prompt(payload: Any) -> str:
@@ -322,7 +345,7 @@ def _load_model_outputs(
 
     primary_count = 0
     reference_count = 0
-    reference_skipped_personalized = 0
+    reference_skipped_persona_specific = 0
     verification_failed_units = 0
 
     for source_label, dir_path in search_dirs:
@@ -345,11 +368,11 @@ def _load_model_outputs(
                     continue
 
                 # From reference, only load original and control samples.
-                # Personalized samples should come from the current persona only.
+                # Persona-specific samples should come from the current persona only.
                 if source_label == "reference":
                     prompt_type = infer_prompt_type(sample_id)
-                    if prompt_type == "personalized":
-                        reference_skipped_personalized += 1
+                    if prompt_type in {"personalized", "simple_personalized"}:
+                        reference_skipped_persona_specific += 1
                         continue
 
                 if bool(
@@ -387,27 +410,23 @@ def _load_model_outputs(
             except Exception as exc:
                 logger.warning("Failed to load %s: %s", fpath, exc)
 
-    if reference_skipped_personalized > 0:
+    if reference_skipped_persona_specific > 0:
         logger.debug(
-            "Skipped %d personalized samples from reference (using current persona's instead)",
-            reference_skipped_personalized,
+            "Skipped %d persona-specific samples from reference "
+            "(using current persona's instead)",
+            reference_skipped_persona_specific,
         )
 
     # Categorize outputs by prompt type
-    original_count = sum(1 for k in outputs if infer_prompt_type(k) == "original")
-    personalized_count = sum(
-        1 for k in outputs if infer_prompt_type(k) == "personalized"
-    )
-    control_count = sum(1 for k in outputs if infer_prompt_type(k) == "control")
+    output_counts: Dict[str, int] = defaultdict(int)
+    for sample_id in outputs:
+        output_counts[infer_prompt_type(sample_id)] += 1
 
     logger.info(
-        "Loaded %d outputs for model %s: %d original, %d personalized, %d control "
-        "(primary=%d, reference=%d)",
+        "Loaded %d outputs for model %s: %s (primary=%d, reference=%d)",
         len(outputs),
         model_name,
-        original_count,
-        personalized_count,
-        control_count,
+        _format_prompt_type_count_summary(output_counts),
         primary_count,
         reference_count,
     )
@@ -534,9 +553,9 @@ def _build_comparison_inputs(
             model_b_name,
             len(only_b),
         )
-        # Categorize missing samples by prompt type for better diagnostics
-        only_a_by_type = {"original": 0, "personalized": 0, "control": 0}
-        only_b_by_type = {"original": 0, "personalized": 0, "control": 0}
+        # Categorize missing samples by prompt type for better diagnostics.
+        only_a_by_type: Dict[str, int] = defaultdict(int)
+        only_b_by_type: Dict[str, int] = defaultdict(int)
         for sid in only_a:
             only_a_by_type[infer_prompt_type(sid)] += 1
         for sid in only_b:
@@ -544,22 +563,18 @@ def _build_comparison_inputs(
 
         if only_a:
             logger.debug(
-                "Only in %s: %d samples (original=%d, personalized=%d, control=%d). First 10: %s",
+                "Only in %s: %d samples (%s). First 10: %s",
                 model_a_name,
                 len(only_a),
-                only_a_by_type["original"],
-                only_a_by_type["personalized"],
-                only_a_by_type["control"],
+                _format_prompt_type_count_summary(only_a_by_type),
                 sorted(only_a)[:10],
             )
         if only_b:
             logger.debug(
-                "Only in %s: %d samples (original=%d, personalized=%d, control=%d). First 10: %s",
+                "Only in %s: %d samples (%s). First 10: %s",
                 model_b_name,
                 len(only_b),
-                only_b_by_type["original"],
-                only_b_by_type["personalized"],
-                only_b_by_type["control"],
+                _format_prompt_type_count_summary(only_b_by_type),
                 sorted(only_b)[:10],
             )
 
@@ -581,18 +596,20 @@ def _build_comparison_inputs(
                 model_a_name,
             )
 
-    # Categorize common samples by prompt type
-    common_by_type = {"original": [], "personalized": [], "control": []}
+    # Categorize common samples by prompt type.
+    common_by_type: Dict[str, List[str]] = defaultdict(list)
     for sid in common_samples:
         prompt_type = infer_prompt_type(sid)
         common_by_type[prompt_type].append(sid)
 
+    common_counts = {
+        prompt_type: len(sample_ids)
+        for prompt_type, sample_ids in common_by_type.items()
+    }
     logger.info(
-        "Common samples: %d total (%d original, %d personalized, %d control)",
+        "Common samples: %d total (%s)",
         len(common_samples),
-        len(common_by_type["original"]),
-        len(common_by_type["personalized"]),
-        len(common_by_type["control"]),
+        _format_prompt_type_count_summary(common_counts),
     )
 
     missing_prompts: List[str] = []
@@ -621,8 +638,8 @@ def _build_comparison_inputs(
         )
 
     if missing_prompts:
-        # Group missing prompts by type for better diagnostics
-        missing_by_type = {"original": [], "personalized": [], "control": []}
+        # Group missing prompts by type for better diagnostics.
+        missing_by_type: Dict[str, List[str]] = defaultdict(list)
         for sid in missing_prompts:
             prompt_type = infer_prompt_type(sid)
             missing_by_type[prompt_type].append(sid)
@@ -758,7 +775,7 @@ def main(args: Optional[List[str]] = None, judge_model: Optional[BaseModel] = No
     parser.add_argument(
         "--prompt-types",
         nargs="+",
-        choices=["original", "personalized", "control"],
+        choices=["original", "personalized", "control", "simple_personalized"],
         help=(
             "Prompt types to include in pairwise comparison. When omitted, all prompt "
             "types are compared together using the legacy directory layout. When "
@@ -970,17 +987,15 @@ def main(args: Optional[List[str]] = None, judge_model: Optional[BaseModel] = No
         prompts.setdefault(key, val)
 
     # Summarize loaded prompts by type
-    prompt_counts = {"original": 0, "personalized": 0, "control": 0}
+    prompt_counts: Dict[str, int] = defaultdict(int)
     for pid in prompts:
         ptype = infer_prompt_type(pid)
         prompt_counts[ptype] = prompt_counts.get(ptype, 0) + 1
 
     logger.info(
-        "Loaded %d prompts total: %d original, %d personalized, %d control",
+        "Loaded %d prompts total: %s",
         len(prompts),
-        prompt_counts["original"],
-        prompt_counts["personalized"],
-        prompt_counts["control"],
+        _format_prompt_type_count_summary(prompt_counts),
     )
 
     if not prompts:

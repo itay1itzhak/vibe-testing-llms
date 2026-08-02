@@ -213,7 +213,6 @@ class QwenModel(BaseModel):
               max_seq_length: 4096
               load_in_4bit: false
               full_finetuning: false
-              cache_dir: "/mnt/nlp/models"
               hf_token: "hf_..."  # optional
         """
         if not torch.cuda.is_available():
